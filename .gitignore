@@ -1,0 +1,27 @@
+node_modules/
+dist/
+build/
+# Only the root .env (the real secrets file) is ignored - server/.env and
+# client/.env are symlinks to it (see README setup steps) and must stay
+# trackable so a fresh clone doesn't silently lose them.
+/.env
+.env.local
+*.log
+.DS_Store
+
+# database
+server/data/
+server/prisma/dev.db
+server/prisma/*.db
+server/prisma/*.db-journal
+
+# generated project media (large binary output, not source)
+video-projects/*/
+!video-projects/.gitkeep
+
+# vite
+client/dist/
+client/.vite/
+
+# test output
+coverage/

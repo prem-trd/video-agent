@@ -1,0 +1,23 @@
+{
+  "name": "ai-video-studio",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AI Video Studio - local AI agent for planning, generating and assembling videos.",
+  "scripts": {
+    "dev": "concurrently -n server,client -c blue,green \"npm run dev --workspace=server\" \"npm run dev --workspace=client\"",
+    "dev:server": "npm run dev --workspace=server",
+    "dev:client": "npm run dev --workspace=client",
+    "build": "npm run build --workspace=server && npm run build --workspace=client",
+    "typecheck": "npm run typecheck --workspace=server && npm run typecheck --workspace=client",
+    "test": "npm run test --workspace=server",
+    "db:migrate": "npm run db:migrate --workspace=server",
+    "postinstall": "npm run db:generate --workspace=server"
+  },
+  "workspaces": [
+    "server",
+    "client"
+  ],
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  }
+}

@@ -1,0 +1,181 @@
+// AI Video Studio - Database Schema
+// V1 uses SQLite. Kept relationally simple so a future move to
+// PostgreSQL only requires changing the datasource provider.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Project {
+  id           String   @id @default(cuid())
+  title        String
+  description  String   @default("")
+  topic        String   @default("")
+  duration     Int      @default(60)
+  aspectRatio  String   @default("16:9")
+  resolution   String   @default("1920x1080")
+  fps          Int      @default(30)
+  language     String   @default("English")
+  audience     String   @default("General")
+  style        String   @default("3D Cartoon")
+  videoType    String   @default("Educational")
+  status       String   @default("DRAFT") // DRAFT | GENERATING | READY | FAILED
+  agentState   String   @default("IDLE")
+  storagePath  String
+  scriptJson   String   @default("null") // serialized Script
+  styleBible   String   @default("null") // serialized StyleBible
+  youtubeMeta  String   @default("null") // serialized YouTube metadata
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  scenes      Scene[]
+  characters  Character[]
+  assets      Asset[]
+  tasks       AgentTask[]
+  logs        AgentLog[]
+  revisions   Revision[]
+  messages    ChatMessage[]
+}
+
+model Scene {
+  id                 String   @id @default(cuid())
+  projectId          String
+  project            Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  sceneNumber        Int
+  duration           Float    @default(5)
+  narration          String   @default("")
+  onScreenText       String   @default("")
+  visualDescription  String   @default("")
+  imagePrompt        String   @default("")
+  videoPrompt        String   @default("")
+  animationDirection String   @default("")
+  cameraDirection    String   @default("")
+  transition         String   @default("fade")
+  soundEffects       String   @default("")
+  status             String   @default("PLANNED") // PLANNED|GENERATING|READY|FAILED|REGENERATING|APPROVED
+  activeAssetId       String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  assets Asset[]
+
+  @@unique([projectId, sceneNumber])
+  @@index([projectId])
+}
+
+model Character {
+  id            String   @id @default(cuid())
+  projectId     String
+  project       Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  characterKey  String   // stable id used in prompts, e.g. "alpaca_01"
+  name          String
+  appearance    String   @default("")
+  age           String   @default("")
+  colors        String   @default("")
+  clothing      String   @default("")
+  personality   String   @default("")
+  visualStyle   String   @default("")
+  environment   String   @default("")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([projectId, characterKey])
+  @@index([projectId])
+}
+
+model Asset {
+  id            String   @id @default(cuid())
+  projectId     String
+  project       Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  sceneId       String?
+  scene         Scene?   @relation(fields: [sceneId], references: [id], onDelete: SetNull)
+  type          String   // IMAGE | VIDEO | VOICE | MUSIC | SUBTITLE | THUMBNAIL
+  version       Int      @default(1)
+  status        String   @default("QUEUED") // QUEUED|PROCESSING|COMPLETED|FAILED
+  provider      String
+  isMock        Boolean  @default(true)
+  prompt        String   @default("")
+  filePath      String   @default("")
+  duration      Float?
+  generationHash String  @default("")
+  metadata      String   @default("{}") // JSON blob: resolution, voice, language, etc.
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([projectId])
+  @@index([sceneId])
+  @@index([generationHash])
+}
+
+model AgentTask {
+  id          String   @id @default(cuid())
+  projectId   String
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  type        String
+  state       String   @default("PENDING") // PENDING|RUNNING|COMPLETED|FAILED|CANCELLED
+  input       String   @default("{}")
+  output      String   @default("{}")
+  error       String?
+  retryCount  Int      @default(0)
+  startedAt   DateTime?
+  finishedAt  DateTime?
+  createdAt   DateTime @default(now())
+
+  @@index([projectId])
+}
+
+model AgentLog {
+  id         String   @id @default(cuid())
+  projectId  String
+  project    Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  level      String   @default("info")
+  agentState String   @default("")
+  task       String   @default("")
+  tool       String   @default("")
+  message    String
+  durationMs Int?
+  data       String   @default("{}")
+  createdAt  DateTime @default(now())
+
+  @@index([projectId])
+}
+
+model Revision {
+  id         String   @id @default(cuid())
+  projectId  String
+  project    Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  summary    String
+  diff       String   @default("{}")
+  createdAt  DateTime @default(now())
+
+  @@index([projectId])
+}
+
+model ChatMessage {
+  id         String   @id @default(cuid())
+  projectId  String
+  project    Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  role       String   // user | assistant | system | tool
+  content    String
+  toolCalls  String   @default("null")
+  createdAt  DateTime @default(now())
+
+  @@index([projectId])
+}
+
+model ProviderConfig {
+  id         String   @id @default(cuid())
+  kind       String   // IMAGE|VIDEO|TTS|MUSIC
+  name       String
+  isMock     Boolean  @default(true)
+  isActive   Boolean  @default(true)
+  config     String   @default("{}")
+  createdAt  DateTime @default(now())
+
+  @@unique([kind, name])
+}
