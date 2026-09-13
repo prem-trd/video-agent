@@ -3,8 +3,8 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import type { Tool } from "../types.js";
 import { SceneService } from "../../services/SceneService.js";
-import { AssetService, computeGenerationHash } from "../../services/AssetService.js";
 import { RenderPaths } from "../../services/RenderPaths.js";
+import { AppError } from "../../utils/errors.js";
 
 const InputSchema = z.object({}).strict();
 
@@ -27,27 +27,26 @@ export function formatVttTime(totalSec: number): string {
 }
 
 /**
- * Generates SRT and WebVTT subtitle files synced to each scene's narration
- * timing (spec #22). Uses each scene's actual generated voice-clip
- * duration when available (more accurate than the script's estimated
- * scene duration), falling back to the stored scene duration otherwise.
+ * Generates SRT and WebVTT subtitle files from each scene's narration/
+ * on-screen text, timed using the scene's own (deterministic) startTime/
+ * endTime. Entirely optional - only meaningful if the project actually has
+ * narration or on-screen text; scenes without any are skipped, and if NO
+ * scene has any, this tool reports that subtitles aren't applicable rather
+ * than writing an empty file.
  */
 export const generateSubtitlesTool: Tool<z.infer<typeof InputSchema>> = {
   name: "generate_subtitles",
-  description:
-    "Generate SRT and WebVTT subtitle files from the scene narration, timed sequentially using each scene's actual narration length. Call after generate_voice has run for every scene (or after add_audio) for the most accurate timing.",
+  description: "Generate SRT and WebVTT subtitle files from scene narration/on-screen text, timed to each scene. Optional - skip if the project has no narration or on-screen text (or the user uploaded their own subtitle file).",
   inputSchema: InputSchema,
   retryable: true,
   async execute(_input, ctx) {
     const scenes = await SceneService.list(ctx.projectId);
+    const cues = scenes
+      .filter((s) => s.narration || s.onScreenText)
+      .map((s, i) => ({ index: i + 1, start: s.startTime, end: s.endTime, text: s.narration || s.onScreenText }));
 
-    let cursor = 0;
-    const cues: { index: number; start: number; end: number; text: string }[] = [];
-    for (const scene of scenes) {
-      const voiceAsset = await AssetService.getLatest(ctx.projectId, scene.id, "VOICE");
-      const duration = voiceAsset?.duration ?? scene.duration;
-      cues.push({ index: cues.length + 1, start: cursor, end: cursor + duration, text: scene.narration || scene.onScreenText || " " });
-      cursor += duration;
+    if (cues.length === 0) {
+      throw new AppError("VALIDATION_ERROR", "No scene has narration or on-screen text - subtitles aren't applicable to this project. Skip this step.", { retryable: false });
     }
 
     const srt = cues.map((c) => `${c.index}\n${formatSrtTime(c.start)} --> ${formatSrtTime(c.end)}\n${c.text}\n`).join("\n");
@@ -59,18 +58,6 @@ export const generateSubtitlesTool: Tool<z.infer<typeof InputSchema>> = {
     await fs.writeFile(srtPath, srt, "utf-8");
     await fs.writeFile(vttPath, vtt, "utf-8");
 
-    const generationHash = computeGenerationHash({ type: "SUBTITLE", cues: cues.map((c) => c.text) });
-    await AssetService.record({
-      projectId: ctx.projectId,
-      type: "SUBTITLE",
-      provider: "internal",
-      isMock: false,
-      filePath: srtPath,
-      duration: cursor,
-      generationHash,
-      metadata: { vttPath, cueCount: cues.length },
-    });
-
-    return { srtPath, vttPath, cueCount: cues.length, totalDurationSec: cursor };
+    return { srtPath, vttPath, cueCount: cues.length };
   },
 };

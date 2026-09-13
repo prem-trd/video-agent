@@ -444,12 +444,11 @@ select:focus {
 .badge.status-REGENERATING,
 .badge.status-ANALYZING,
 .badge.status-PLANNING,
-.badge.status-SCRIPT_GENERATION,
+.badge.status-STORY_STRUCTURE,
 .badge.status-SCENE_PLANNING,
 .badge.status-PROMPT_GENERATION,
-.badge.status-ASSET_GENERATION,
-.badge.status-VOICE_GENERATION,
-.badge.status-SUBTITLE_GENERATION,
+.badge.status-AWAITING_UPLOADS,
+.badge.status-TIMELINE_BUILDING,
 .badge.status-VIDEO_ASSEMBLY,
 .badge.status-VALIDATING {
   background: var(--accent-dim);
@@ -755,4 +754,102 @@ select:focus {
 
 .delete-btn:hover {
   color: var(--danger);
+}
+
+/* ---------- Prompt generator ---------- */
+
+.inline-fields {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.inline-fields input,
+.inline-fields select {
+  flex: 1;
+  min-width: 0;
+}
+
+.radio-row {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  padding: 6px 0;
+}
+
+.radio-option {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.radio-option input {
+  padding: 0;
+  width: auto;
+}
+
+.calc-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  background: var(--surface-2);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 12px;
+  color: var(--text-dim);
+  margin: 12px 0;
+}
+
+.calc-summary strong {
+  color: var(--text);
+}
+
+/* ---------- Upload & Assemble ---------- */
+
+.dropzone {
+  border: 2px dashed var(--border);
+  border-radius: var(--radius);
+  padding: 22px 14px;
+  text-align: center;
+  color: var(--text-dim);
+  font-size: 12.5px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 12px;
+}
+
+.dropzone.drag-over,
+.dropzone:hover {
+  border-color: var(--accent);
+  background: var(--accent-dim);
+}
+
+.media-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.media-card {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background: var(--surface-2);
+}
+
+.media-card-name {
+  font-size: 12.5px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }

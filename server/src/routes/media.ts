@@ -2,12 +2,20 @@ import { Router } from "express";
 import fs from "node:fs";
 import { RenderPaths } from "../services/RenderPaths.js";
 import { AssetService } from "../services/AssetService.js";
+import { prisma } from "../database/prisma.js";
 import { safeProjectPath } from "../utils/paths.js";
 import { AppError } from "../utils/errors.js";
 import { childLogger } from "../utils/logger.js";
 
 const log = childLogger({ module: "media-route" });
 export const mediaRouter = Router({ mergeParams: true });
+
+/** The uploaded-media library (spec: media library UI panel). */
+mediaRouter.get("/media", async (req, res) => {
+  const { id: projectId } = req.params as { id: string };
+  const media = await prisma.mediaAsset.findMany({ where: { projectId }, orderBy: { createdAt: "asc" } });
+  res.json(media);
+});
 
 function sendIfExists(res: import("express").Response, filePath: string, notFoundMessage: string) {
   if (!fs.existsSync(filePath)) {
@@ -37,11 +45,11 @@ mediaRouter.get("/video", (req, res) => {
   sendIfExists(res, existing, "Video not found.");
 });
 
-/** The most recently generated thumbnail (from either create_thumbnail or generate_youtube_metadata - whichever ran last). */
+/** The most recently generated thumbnail. */
 mediaRouter.get("/thumbnail", async (req, res) => {
   const { id: projectId } = req.params as { id: string };
   try {
-    const latest = await AssetService.getLatest(projectId, undefined, "THUMBNAIL");
+    const latest = await AssetService.getLatest(projectId, "THUMBNAIL");
     if (!latest) {
       res.status(404).json({ error: { code: "NOT_FOUND", message: "No thumbnail generated yet - call create_thumbnail first.", retryable: false } });
       return;

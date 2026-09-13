@@ -1,62 +1,70 @@
 import { z } from "zod";
 import fs from "node:fs/promises";
 import type { Tool } from "../types.js";
-import { AssetService } from "../../services/AssetService.js";
+import { prisma } from "../../database/prisma.js";
 import { ffmpegService } from "../../media/ffmpeg/FFmpegService.js";
 import { RenderPaths } from "../../services/RenderPaths.js";
 import { AppError } from "../../utils/errors.js";
-import { looseOptional } from "../../utils/zodHelpers.js";
 
-const InputSchema = z
-  .object({
-    musicVolume: looseOptional(z.number().min(0).max(1)).describe("Relative volume of the music under the narration, default 0.25."),
-  })
-  .strict();
+const InputSchema = z.object({}).strict();
+
+async function firstExisting(paths: string[]): Promise<string | null> {
+  for (const p of paths) {
+    try {
+      await fs.access(p);
+      return p;
+    } catch {
+      /* try next */
+    }
+  }
+  return null;
+}
 
 /**
- * Mixes the project's background music (generate_music) under the
- * narration track and re-muxes onto the silent video (spec #23 assembly
- * pipeline, step 3; spec #21 volume/loop/fade support lives in
- * FFmpegService.mixAudio). Requires merge_videos and add_audio to have run
- * first, and a music asset to already exist.
+ * Mixes the uploaded background music track into the video (under the
+ * narration if one was added, otherwise directly). Optional - only
+ * relevant if the user uploaded music. No music is generated here.
  */
 export const addMusicTool: Tool<z.infer<typeof InputSchema>> = {
   name: "add_music",
-  description:
-    "Mix the generated background music under the narration and add it to the video. Requires merge_videos, add_audio, and generate_music to have run first.",
+  description: "Mix the uploaded background music track into the video, under narration if add_narration already ran. Optional - only call this if the user has uploaded a music file.",
   inputSchema: InputSchema,
   retryable: true,
   timeoutMs: 120_000,
-  async execute(input, ctx) {
-    const silentVideoPath = RenderPaths.silentVideo(ctx.projectId);
-    const narrationPath = RenderPaths.narrationTrack(ctx.projectId);
-
-    for (const [label, p] of [
-      ["merged video (call merge_videos)", silentVideoPath],
-      ["narration track (call add_audio)", narrationPath],
-    ] as const) {
-      try {
-        await fs.access(p);
-      } catch {
-        throw new AppError("VALIDATION_ERROR", `Missing ${label} first.`, { retryable: false });
-      }
+  async execute(_input, ctx) {
+    const sourceVideo = await firstExisting([RenderPaths.withNarration(ctx.projectId), RenderPaths.silentVideo(ctx.projectId)]);
+    if (!sourceVideo) {
+      throw new AppError("VALIDATION_ERROR", "No rendered video found - call render_timeline (and optionally add_narration) first.", { retryable: false });
     }
 
-    const musicAsset = await AssetService.getLatest(ctx.projectId, undefined, "MUSIC");
-    if (!musicAsset) {
-      throw new AppError("VALIDATION_ERROR", "No music asset found - call generate_music first.", { retryable: false });
+    const musicTrack = await prisma.audioTrack.findFirst({ where: { projectId: ctx.projectId, kind: "MUSIC", active: true }, orderBy: { createdAt: "desc" } });
+    if (!musicTrack) {
+      throw new AppError("VALIDATION_ERROR", "No music track has been uploaded - upload one, or skip this step.", { retryable: false });
     }
 
-    const narrationProbe = await ffmpegService.probe(narrationPath);
-
-    const mixedPath = RenderPaths.mixedAudioTrack(ctx.projectId);
-    await ffmpegService.mixAudio(narrationPath, musicAsset.filePath, mixedPath, {
-      durationSec: narrationProbe.durationSec,
-      musicVolume: input.musicVolume ?? 0.25,
-    });
-
+    const narrationTrack = await prisma.audioTrack.findFirst({ where: { projectId: ctx.projectId, kind: "NARRATION", active: true }, orderBy: { createdAt: "desc" } });
+    const videoProbe = await ffmpegService.probe(sourceVideo);
     const outputPath = RenderPaths.withMusic(ctx.projectId);
-    await ffmpegService.addAudio(silentVideoPath, mixedPath, outputPath);
+
+    if (narrationTrack && videoProbe.hasAudio) {
+      const mixedPath = RenderPaths.mixedAudioTrack(ctx.projectId);
+      await ffmpegService.mixAudio(narrationTrack.filePath, musicTrack.filePath, mixedPath, {
+        durationSec: videoProbe.durationSec,
+        musicVolume: musicTrack.volume,
+        fadeInSec: musicTrack.fadeInSec,
+        fadeOutSec: musicTrack.fadeOutSec,
+      });
+      await ffmpegService.addAudio(RenderPaths.silentVideo(ctx.projectId), mixedPath, outputPath);
+    } else {
+      const preparedMusicPath = RenderPaths.mixedAudioTrack(ctx.projectId);
+      await ffmpegService.prepareMusicTrack(musicTrack.filePath, preparedMusicPath, {
+        durationSec: videoProbe.durationSec,
+        volume: musicTrack.volume,
+        fadeInSec: musicTrack.fadeInSec,
+        fadeOutSec: musicTrack.fadeOutSec,
+      });
+      await ffmpegService.addAudio(sourceVideo, preparedMusicPath, outputPath);
+    }
 
     const probe = await ffmpegService.probe(outputPath);
     return { filePath: outputPath, durationSec: probe.durationSec, hasAudio: probe.hasAudio };

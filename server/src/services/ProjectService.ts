@@ -3,13 +3,16 @@ import { prisma } from "../database/prisma.js";
 import { ProjectStorage } from "./ProjectStorage.js";
 import { AppError } from "../utils/errors.js";
 import { env } from "../utils/env.js";
-import type { AspectRatio, StyleBible } from "../types/project.js";
+import type { AspectRatio, MediaType, StyleBible } from "../types/project.js";
 
 export interface CreateProjectInput {
   title: string;
   description?: string;
   topic?: string;
   duration?: number;
+  mediaType?: MediaType;
+  clipDurationSec?: number;
+  imageDurationSec?: number;
   aspectRatio?: AspectRatio;
   resolution?: string;
   fps?: number;
@@ -17,12 +20,15 @@ export interface CreateProjectInput {
   audience?: string;
   style?: string;
   videoType?: string;
+  narrationRequired?: boolean;
+  musicRequired?: boolean;
 }
 
 const RESOLUTION_BY_ASPECT: Record<AspectRatio, string> = {
   "16:9": "1920x1080",
   "9:16": "1080x1920",
   "1:1": "1080x1080",
+  "4:3": "1440x1080",
 };
 
 /** Serialized project shape returned by the API (JSON string columns parsed). */
@@ -33,6 +39,11 @@ export function serializeProject(p: Project) {
     description: p.description,
     topic: p.topic,
     duration: p.duration,
+    mediaType: p.mediaType,
+    clipDurationSec: p.clipDurationSec,
+    imageDurationSec: p.imageDurationSec,
+    narrationRequired: p.narrationRequired,
+    musicRequired: p.musicRequired,
     aspectRatio: p.aspectRatio,
     resolution: p.resolution,
     fps: p.fps,
@@ -44,7 +55,7 @@ export function serializeProject(p: Project) {
     agentState: p.agentState,
     script: safeParse(p.scriptJson),
     styleBible: safeParse(p.styleBible) as StyleBible | null,
-    youtubeMeta: safeParse(p.youtubeMeta),
+    storyContext: p.storyContext,
     createdAt: p.createdAt,
     updatedAt: p.updatedAt,
   };
@@ -67,6 +78,11 @@ export class ProjectService {
         description: input.description ?? "",
         topic: input.topic ?? input.title,
         duration: input.duration ?? 60,
+        mediaType: input.mediaType ?? "VIDEO",
+        clipDurationSec: input.clipDurationSec ?? 10,
+        imageDurationSec: input.imageDurationSec ?? 5,
+        narrationRequired: input.narrationRequired ?? false,
+        musicRequired: input.musicRequired ?? false,
         aspectRatio,
         resolution: input.resolution ?? RESOLUTION_BY_ASPECT[aspectRatio],
         fps: input.fps ?? 30,
@@ -101,6 +117,12 @@ export class ProjectService {
   static async update(id: string, data: Partial<Project>) {
     // never allow storagePath/id to be overwritten from arbitrary input
     const { id: _id, storagePath: _sp, ...rest } = data as any;
+    // Changing aspect ratio without an explicit resolution should re-derive
+    // the resolution, so "change aspect ratio to 9:16" behaves sensibly
+    // from chat without the caller having to also compute resolution.
+    if (rest.aspectRatio && !rest.resolution) {
+      rest.resolution = RESOLUTION_BY_ASPECT[rest.aspectRatio as AspectRatio] ?? rest.resolution;
+    }
     const project = await prisma.project.update({ where: { id }, data: rest });
     await ProjectStorage.writeJson(id, "project.json", serializeProject(project));
     return project;
@@ -128,8 +150,8 @@ export class ProjectService {
     return this.setStyleBible(id, { ...current, ...patch });
   }
 
-  static async setYoutubeMeta(id: string, meta: unknown) {
-    return this.update(id, { youtubeMeta: JSON.stringify(meta) } as Partial<Project>);
+  static resolutionForAspectRatio(aspectRatio: AspectRatio): string {
+    return RESOLUTION_BY_ASPECT[aspectRatio];
   }
 
   static async remove(id: string) {

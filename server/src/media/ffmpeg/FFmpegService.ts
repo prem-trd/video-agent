@@ -226,6 +226,82 @@ export class FFmpegService {
   }
 
   // ---------------------------------------------------------------------
+  // Normalization (uploaded media -> a uniform video segment ready to
+  // concatenate). Never stretches: FIT letterboxes, CROP fills by cropping,
+  // BLUR_BACKGROUND fills the frame with a blurred, cropped copy of the
+  // same image behind a letterboxed foreground.
+  // ---------------------------------------------------------------------
+
+  private fitFilter(mode: "FIT" | "CROP" | "BLUR_BACKGROUND", width: number, height: number): string {
+    switch (mode) {
+      case "CROP":
+        return `scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height},setsar=1`;
+      case "BLUR_BACKGROUND":
+        return (
+          `split=2[bg][fg];` +
+          `[bg]scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height},gblur=sigma=20[bg2];` +
+          `[fg]scale=${width}:${height}:force_original_aspect_ratio=decrease[fg2];` +
+          `[bg2][fg2]overlay=(W-w)/2:(H-h)/2,setsar=1`
+        );
+      case "FIT":
+      default:
+        return `scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2,setsar=1`;
+    }
+  }
+
+  /** Converts a still image into a fixed-duration video segment (slideshow building block). Never stretches - see fitFilter. */
+  async imageToVideo(
+    inputPath: string,
+    outputPath: string,
+    opts: { width: number; height: number; fps: number; durationSec: number; fitMode?: "FIT" | "CROP" | "BLUR_BACKGROUND" }
+  ): Promise<void> {
+    const vf = `${this.fitFilter(opts.fitMode ?? "FIT", opts.width, opts.height)},fps=${opts.fps}`;
+    await this.exec(
+      [
+        "-loop",
+        "1",
+        "-i",
+        inputPath,
+        "-t",
+        String(opts.durationSec),
+        "-vf",
+        vf,
+        "-pix_fmt",
+        "yuv420p",
+        "-c:v",
+        "libx264",
+        outputPath,
+      ],
+      "imageToVideo"
+    );
+  }
+
+  /** Normalizes an uploaded video clip to a common resolution/fps/fit, with optional trim. */
+  async normalizeVideoClip(
+    inputPath: string,
+    outputPath: string,
+    opts: {
+      width: number;
+      height: number;
+      fps: number;
+      fitMode?: "FIT" | "CROP" | "BLUR_BACKGROUND";
+      trimStartSec?: number;
+      trimEndSec?: number;
+    }
+  ): Promise<void> {
+    const vf = `${this.fitFilter(opts.fitMode ?? "FIT", opts.width, opts.height)},fps=${opts.fps}`;
+    const args: string[] = [];
+    if (opts.trimStartSec) args.push("-ss", String(opts.trimStartSec));
+    args.push("-i", inputPath);
+    if (opts.trimEndSec !== undefined) {
+      const duration = opts.trimEndSec - (opts.trimStartSec ?? 0);
+      if (duration > 0) args.push("-t", String(duration));
+    }
+    args.push("-vf", vf, "-pix_fmt", "yuv420p", "-c:v", "libx264", "-an", outputPath);
+    await this.exec(args, "normalizeVideoClip");
+  }
+
+  // ---------------------------------------------------------------------
   // Assembly (spec #23 pipeline)
   // ---------------------------------------------------------------------
 
@@ -318,24 +394,46 @@ export class FFmpegService {
     await this.exec(args, "concatenateAudios");
   }
 
-  /** Mixes narration + background music into one audio track, music at a lower relative volume with a fade out. */
+  /** Mixes narration + background music into one audio track, music at a lower relative volume with fades. */
   async mixAudio(
     narrationPath: string,
     musicPath: string,
     outputPath: string,
-    opts: { musicVolume?: number; durationSec: number; fadeOutSec?: number }
+    opts: { musicVolume?: number; durationSec: number; fadeInSec?: number; fadeOutSec?: number }
   ): Promise<void> {
     const musicVolume = opts.musicVolume ?? 0.25;
+    const fadeIn = opts.fadeInSec ?? 0;
     const fadeOut = opts.fadeOutSec ?? 1.5;
     const fadeStart = Math.max(0, opts.durationSec - fadeOut);
+    const fadeInFilter = fadeIn > 0 ? `,afade=t=in:d=${fadeIn}` : "";
     const filter = [
-      `[1:a]aloop=loop=-1:size=2e9,atrim=0:${opts.durationSec},volume=${musicVolume},afade=t=out:st=${fadeStart}:d=${fadeOut}[music]`,
+      `[1:a]aloop=loop=-1:size=2e9,atrim=0:${opts.durationSec},volume=${musicVolume}${fadeInFilter},afade=t=out:st=${fadeStart}:d=${fadeOut}[music]`,
       `[0:a][music]amix=inputs=2:duration=first:dropout_transition=0[aout]`,
     ].join(";");
     await this.exec(
       ["-i", narrationPath, "-i", musicPath, "-filter_complex", filter, "-map", "[aout]", "-c:a", "aac", outputPath],
       "mixAudio"
     );
+  }
+
+  /** Loops/trims a music bed to an exact duration with volume + fade in/out - used when there's no narration to mix under. */
+  async prepareMusicTrack(
+    musicPath: string,
+    outputPath: string,
+    opts: { durationSec: number; volume?: number; fadeInSec?: number; fadeOutSec?: number }
+  ): Promise<void> {
+    const volume = opts.volume ?? 1;
+    const fadeIn = opts.fadeInSec ?? 0;
+    const fadeOut = opts.fadeOutSec ?? 1.5;
+    const fadeStart = Math.max(0, opts.durationSec - fadeOut);
+    const af = [
+      `aloop=loop=-1:size=2e9`,
+      `atrim=0:${opts.durationSec}`,
+      `volume=${volume}`,
+      ...(fadeIn > 0 ? [`afade=t=in:d=${fadeIn}`] : []),
+      `afade=t=out:st=${fadeStart}:d=${fadeOut}`,
+    ].join(",");
+    await this.exec(["-i", musicPath, "-af", af, "-c:a", "aac", outputPath], "prepareMusicTrack");
   }
 
   /** Merges a video with a finished audio track (alias of addAudio, kept as a distinct pipeline step name). */

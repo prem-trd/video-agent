@@ -11,7 +11,7 @@ build/
 
 # database
 server/data/
-server/prisma/dev.db
+server/prisma/data/
 server/prisma/*.db
 server/prisma/*.db-journal
 

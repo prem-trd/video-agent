@@ -3,6 +3,7 @@ import { z } from "zod";
 import { ProjectService, serializeProject } from "../services/ProjectService.js";
 import { AppError } from "../utils/errors.js";
 import { childLogger } from "../utils/logger.js";
+import { looseOptional } from "../utils/zodHelpers.js";
 
 const log = childLogger({ module: "projects-route" });
 export const projectsRouter = Router();
@@ -11,15 +12,43 @@ const CreateProjectSchema = z.object({
   title: z.string().min(1),
   description: z.string().optional(),
   topic: z.string().optional(),
-  duration: z.number().int().positive().max(3600).optional(),
-  aspectRatio: z.enum(["16:9", "9:16", "1:1"]).optional(),
+  duration: z.number().int().positive().optional(),
+  mediaType: z.enum(["VIDEO", "IMAGE"]).optional(),
+  clipDurationSec: z.number().positive().optional(),
+  imageDurationSec: z.number().positive().optional(),
+  aspectRatio: z.enum(["16:9", "9:16", "1:1", "4:3"]).optional(),
   resolution: z.string().optional(),
   fps: z.number().int().positive().optional(),
   language: z.string().optional(),
   audience: z.string().optional(),
   style: z.string().optional(),
   videoType: z.string().optional(),
+  narrationRequired: z.boolean().optional(),
+  musicRequired: z.boolean().optional(),
 });
+
+// Direct config edit for the Prompt Generator form - bypasses the LLM,
+// mirrors scenesRouter's PATCH pattern.
+const PatchProjectSchema = z
+  .object({
+    title: z.string().optional(),
+    description: z.string().optional(),
+    topic: z.string().optional(),
+    duration: z.number().int().positive().optional(),
+    mediaType: z.enum(["VIDEO", "IMAGE"]).optional(),
+    clipDurationSec: z.number().positive().optional(),
+    imageDurationSec: z.number().positive().optional(),
+    aspectRatio: z.enum(["16:9", "9:16", "1:1", "4:3"]).optional(),
+    resolution: looseOptional(z.string()),
+    fps: z.number().int().positive().optional(),
+    language: z.string().optional(),
+    audience: z.string().optional(),
+    style: z.string().optional(),
+    videoType: z.string().optional(),
+    narrationRequired: z.boolean().optional(),
+    musicRequired: z.boolean().optional(),
+  })
+  .strict();
 
 function handleError(err: unknown, res: import("express").Response) {
   const appErr = AppError.from(err);
@@ -50,6 +79,16 @@ projectsRouter.get("/", async (_req, res) => {
 projectsRouter.get("/:id", async (req, res) => {
   try {
     const project = await ProjectService.get(req.params.id);
+    res.json(serializeProject(project));
+  } catch (err) {
+    handleError(err, res);
+  }
+});
+
+projectsRouter.patch("/:id", async (req, res) => {
+  try {
+    const patch = PatchProjectSchema.parse(req.body);
+    const project = await ProjectService.update(req.params.id, patch as any);
     res.json(serializeProject(project));
   } catch (err) {
     handleError(err, res);

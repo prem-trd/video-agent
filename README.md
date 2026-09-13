@@ -1,22 +1,31 @@
 # AI Video Studio
 
-A local AI agent that plans, scripts, generates, assembles and revises short
-videos, built around a real tool-calling agent loop backed by **Ollama
-Cloud / gpt-oss:120b** — not a scripted demo and not a UI mockup. Every
+A **conversational AI video prompt & media assembly studio**, built around a
+real tool-calling agent loop backed by **Ollama Cloud / gpt-oss:120b** — not
+a scripted demo and not a UI mockup. The agent never generates images,
+video, narration, or music itself — there is no such API and no such
+capability. Instead it (1) writes continuity-consistent, production-ready
+**prompts** for however many scenes a target duration requires (30 seconds
+through 30+ minutes, video or image mode, any clip/image length), which you
+take to your own external AI image/video generator, and (2) helps you
+upload the resulting files, match them to scenes conversationally, and
+assemble them into a final MP4 locally with FFmpeg — mixing in any narration/
+music you also upload, with no TTS or music-generation API involved. Every
 capability described below has been exercised against the live model and
 verified by inspecting the actual database rows and files it produced.
 
-> **Build status**: Phases 1–7 and 9 of 9 are complete and live-tested (see
-> [Progress](#progress) below); Phase 8 (real provider adapters) was
-> deliberately skipped at the user's request since no real API keys were
-> available to test against. A single chat message can now take a project
-> from nothing to a real, validated, playable final MP4 (video + narration
-> + music + subtitles) end-to-end, the full multi-pane Studio UI (left
-> project sidebar, center chat, right preview/scenes, bottom agent
-> activity feed) is wired to the live backend, progress streams to the
-> browser in real time over Server-Sent Events, and the agent can prepare
-> YouTube title/description/tags/thumbnail content (without uploading
-> anything).
+> **Build status**: The full pivot from the original "agent fabricates mock
+> media" prototype to this prompt-generation + upload/assembly workflow is
+> complete and live-tested (see [Progress](#progress) below). A single chat
+> message can take a project from a topic to a full set of continuity-aware
+> scene prompts; after externally generating and uploading the media, a
+> second message (or the "Assemble Video" button) matches uploads to scenes,
+> normalizes mixed image/video sources without stretching, and produces a
+> real, validated, playable final MP4 — with or without narration/music/
+> subtitles, all of which are optional. The multi-pane Studio UI (left
+> project sidebar, center chat, right Prompts/Upload & Assemble/Final Render
+> tabs, bottom agent activity feed) is wired to the live backend, and
+> progress streams to the browser in real time over Server-Sent Events.
 
 ---
 
@@ -31,7 +40,6 @@ verified by inspecting the actual database rows and files it produced.
 - [Development commands](#development-commands)
 - [Production build](#production-build)
 - [Trying it out](#trying-it-out)
-- [Provider configuration](#provider-configuration)
 - [Project structure](#project-structure)
 - [Agent architecture](#agent-architecture)
 - [Tool reference](#tool-reference)
@@ -46,9 +54,10 @@ verified by inspecting the actual database rows and files it produced.
 - **Node.js 20+** (developed on 24)
 - **macOS** with **Homebrew** (for FFmpeg with `drawtext`/subtitle support)
 - An **Ollama Cloud** account and API key
-- No paid media-generation API keys are required to run the app — everything
-  works out of the box against mock providers (see [Provider
-  configuration](#provider-configuration))
+- No image/video/TTS/music generation API keys are required or used —
+  Ollama Cloud is the only external service this app talks to. Actual media
+  generation happens externally, in whatever AI image/video tool you
+  already use; this app writes the prompts and assembles what you upload.
 
 ## Installation
 
@@ -154,8 +163,7 @@ list. Key groups:
 
 | Group | Variables |
 |---|---|
-| Ollama Cloud | `OLLAMA_API_KEY`, `OLLAMA_BASE_URL`, `OLLAMA_MODEL` |
-| Media providers | `VIDEO_PROVIDER`, `IMAGE_PROVIDER`, `TTS_PROVIDER`, `MUSIC_PROVIDER` (all `mock` by default) |
+| Ollama Cloud | `OLLAMA_API_KEY`, `OLLAMA_BASE_URL`, `OLLAMA_MODEL` (the only external service this app calls) |
 | FFmpeg | `FFMPEG_PATH`, `FFPROBE_PATH` |
 | Storage | `PROJECT_STORAGE_PATH` (resolved relative to `server/`'s cwd, so `../video-projects` points at the repo-root `video-projects/`) |
 | Agent | `MAX_AGENT_ITERATIONS`, `MAX_TOOL_RETRIES`, `TOOL_TIMEOUT_MS`, `LLM_TIMEOUT_MS` |
@@ -211,12 +219,13 @@ Studio UI.)
 ## Trying it out
 
 **Via the UI**: `npm run dev`, open http://localhost:5173, click **+ New
-Project**, describe your video in the "Create from prompt" tab (or fill in
-the structured form), and chat with the agent. The right panel shows the
-video preview, project/Style Bible info, and per-scene status with
-regenerate buttons; the bottom panel shows live agent activity (it polls
-`/status` while a turn is in flight, since a full pipeline run can take
-30–60+ seconds).
+Project**, describe what you want in "Describe it" (or fill in the basics
+yourself), and let the agent write the prompts. The right panel has three
+tabs: **Prompts** (the configuration form plus the generated scene list),
+**Upload & Assemble** (drag-and-drop your externally-generated clips/images,
+match them to scenes, upload optional narration/music), and **Final Render**
+(preview, stats, download). The bottom panel shows live agent activity over
+Server-Sent Events.
 
 **Via the API directly** — the same walkthrough, useful for scripting or
 debugging:
@@ -225,72 +234,54 @@ debugging:
 # 1. Create a project
 curl -s -X POST http://localhost:4000/api/projects \
   -H "Content-Type: application/json" \
-  -d '{"title":"ABC with Farm Animals","topic":"Teach the alphabet using farm animals","duration":30,"style":"3D Cartoon","audience":"Preschool","aspectRatio":"16:9"}'
-# -> {"id": "...", ...}
+  -d '{"title":"ABC with Farm Animals","topic":"Teach the alphabet using farm animals","duration":300,"mediaType":"VIDEO","clipDurationSec":10,"style":"3D Cartoon","audience":"Preschool","aspectRatio":"16:9"}'
+# -> {"id": "...", ...}  (300s / 10s clips -> 30 scenes, computed deterministically)
 
-# 2. Ask the agent to plan, script and break it into scenes
+# 2. Generate the full prompt package (plan -> story structure -> per-scene prompts)
+curl -s -X POST http://localhost:4000/api/projects/<id>/generate-prompts
+
+# 3. Inspect the generated scenes/prompts
+curl -s http://localhost:4000/api/projects/<id>/scenes | python3 -m json.tool
+
+# 4. Generate the 30 clips externally (your own AI video tool) named e.g.
+#    scene-01.mp4 .. scene-30.mp4, then upload them:
+curl -s -X POST http://localhost:4000/api/projects/<id>/upload \
+  -F "files=@scene-01.mp4;type=video/mp4" -F "files=@scene-02.mp4;type=video/mp4" # ... etc
+
+# 5. Assemble (skips narration/music/subtitles automatically if none were uploaded)
+curl -s -X POST http://localhost:4000/api/projects/<id>/assemble
+
+# 6. Make a targeted revision via chat
 curl -s -X POST http://localhost:4000/api/projects/<id>/chat \
   -H "Content-Type: application/json" \
-  -d '{"message":"Plan this video and write the full script and scene breakdown."}'
+  -d '{"message":"Replace scene 8, and move scene 15 before scene 12."}'
 
-# 3. Ask it to generate media for every scene
-curl -s -X POST http://localhost:4000/api/projects/<id>/chat \
-  -H "Content-Type: application/json" \
-  -d '{"message":"Generate video and narration for every scene, plus background music."}'
-
-# 4. Make a targeted revision
-curl -s -X POST http://localhost:4000/api/projects/<id>/chat \
-  -H "Content-Type: application/json" \
-  -d '{"message":"Regenerate the video prompt for scene 2 to add more energy."}'
-
-# 5. Inspect what happened
-curl -s http://localhost:4000/api/projects/<id>/status | python3 -m json.tool
+# 7. Inspect the result
+curl -s http://localhost:4000/api/projects/<id>/renders/latest | python3 -m json.tool
 ```
 
-Generated files land in `video-projects/<id>/assets/{images,videos,audio,music}/`.
-
-## Provider configuration
-
-Image, video, TTS and music generation are behind provider interfaces
-([server/src/providers/types.ts](server/src/providers/types.ts)) so the
-agent loop, tools, and routes never know or care which vendor is actually
-generating media.
-
-**Local development (default, zero cost):** `*_PROVIDER=mock` for all four.
-The mock providers render **real** output through FFmpeg — placeholder
-images/videos with a "MOCK ASSET" watermark, and placeholder audio tones
-sized to match narration length — so the entire pipeline (generation →
-FFmpeg assembly → validation) is genuinely exercised without ever calling a
-paid API. Every mock-generated `Asset` row is flagged `isMock: true` and
-`provider: "mock"`; the API/UI must never claim a mock asset is real
-AI-generated media.
-
-**Adding a real vendor (Phase 8):** implement `ImageProvider` /
-`VideoProvider` / `TTSProvider` / `MusicProvider`
-([server/src/providers/types.ts](server/src/providers/types.ts)) in a new
-file under `server/src/providers/<kind>/`, register it in
-[server/src/providers/registry.ts](server/src/providers/registry.ts), and
-set the matching `*_PROVIDER` env var to its name. Nothing else changes —
-not the tools, not `AgentLoop`, not the routes.
+Uploaded files land in `video-projects/<id>/assets/uploads/{images,videos}/`
+and `assets/audio/`; the final render is
+`video-projects/<id>/renders/final.mp4` (or an earlier stage if narration/
+music/subtitles were skipped).
 
 ## Project structure
 
 ```
 ai-video-studio/
 ├── client/                       React + Vite + TypeScript frontend
-│   └── src/                      (currently: Phase 1 connectivity-check page only)
+│   └── src/features/             chat/ projects/ promptgen/ scenes/ assemble/ render/ activity/
 ├── server/
 │   ├── src/
 │   │   ├── agent/                AgentLoop, VideoAgent, AgentMemory, TaskManager, AgentLogger, ToolExecutor
-│   │   ├── llm/                  OllamaClient (the only file that talks to Ollama Cloud)
-│   │   ├── tools/                every agent tool, grouped: planning/ script/ scenes/ media/ audio/
-│   │   ├── providers/            ImageProvider/VideoProvider/TTSProvider/MusicProvider + mock adapters + registry
-│   │   ├── media/ffmpeg/         FFmpegService - the only place ffmpeg/ffprobe are invoked
-│   │   ├── services/             ProjectService, SceneService, CharacterService, AssetService, ProjectStorage
+│   │   ├── llm/                  OllamaClient (the only file that talks to Ollama Cloud, and the only external AI service used)
+│   │   ├── tools/                every agent tool, grouped: planning/ script/ scenes/ media/ audio/ validation/
+│   │   ├── media/ffmpeg/         FFmpegService - the only place ffmpeg/ffprobe are invoked (probe, normalize, image-to-video, concat, mux, subtitles)
+│   │   ├── services/             ProjectService, SceneService, PromptVersionService, CharacterService, EnvironmentService, MediaUploadService, TimelineService, AssetService, ProjectStorage
 │   │   ├── database/             Prisma client
-│   │   ├── routes/                Express routes
+│   │   ├── routes/                Express routes (projects, chat, scenes, upload, timeline, media, assets, agent, events)
 │   │   ├── types/                shared domain types + zod schemas (single source of truth)
-│   │   └── utils/                env, logger, errors, path safety, zod helpers
+│   │   └── utils/                env, logger, errors, path safety, zod helpers, deterministic scene-count math
 │   ├── prisma/                   schema + migrations
 │   └── tests/                    vitest unit + real-ffmpeg integration tests
 ├── video-projects/               per-project generated files (gitignored) - see layout below
@@ -303,23 +294,29 @@ Each project gets its own directory under `video-projects/`:
 ```
 video-projects/<projectId>/
     project.json
-    script/script.json
+    script/story-structure.json
     scenes/scenes.json
     characters/character-bible.json
+    characters/environment-bible.json
     style-bible.json
-    assets/{images,videos,audio,music,subtitles}/
+    assets/
+        uploads/{images,videos}/   externally-generated media the user uploaded
+        audio/                     uploaded narration/music tracks
+        subtitles/                 generated or uploaded .srt/.vtt
     renders/           preview_silent.mp4, with_narration.mp4, with_music.mp4, final.mp4
-    thumbnails/        thumbnail.png
+    thumbnails/        thumbnail-vN.png
     logs/
 ```
 
-The SQLite database holds the queryable metadata (projects, scenes,
-characters, assets, agent tasks/logs, chat history); the filesystem holds
-the actual working files and media. Every filesystem path a tool touches is
-resolved through
+The SQLite database holds the queryable metadata (projects, scenes/prompts,
+prompt versions, character/environment bibles, uploaded media, the assembly
+timeline, audio tracks, renders, agent tasks/logs, chat history); the
+filesystem holds the actual uploaded files and rendered media. Every
+filesystem path a tool touches is resolved through
 [server/src/utils/paths.ts](server/src/utils/paths.ts), which rejects
 anything that would escape `PROJECT_STORAGE_PATH` (path traversal, absolute
-escapes, etc) — the LLM never gets raw filesystem or shell access.
+escapes, etc) — the LLM never gets raw filesystem or shell access, and
+uploads never write outside the project's own directory.
 
 ## Agent architecture
 
@@ -346,17 +343,21 @@ AgentLoop.run()                          - agent/AgentLoop.ts
    │
    ▼
 Tool implementations (tools/*)  →  Services (services/*)  →  Prisma DB +
-   filesystem (ProjectStorage)  and/or  Providers (providers/*)  →
-   FFmpegService (media/ffmpeg/*)
+   filesystem (ProjectStorage, uploaded media)  →  FFmpegService
+   (media/ffmpeg/*) for anything that touches pixels/audio
 ```
 
 The model **never** generates an entire project in one response — each
 LLM round-trip is one reasoning step plus (optionally) one batch of tool
-calls, exactly matching the "analyze → plan → tool → result → reason →
-next tool → complete" loop the product spec calls for. This was verified
-live: a full plan+script+scenes+media request for a 3-scene video took 16
-real LLM round-trips (not 1), with the model inspecting real tool results
-(via `read_project`/`list_assets`) between steps rather than assuming.
+calls, matching the "analyze → plan → tool → result → reason → next tool →
+complete" loop this app is built around. Live-verified for both halves of
+the workflow: a `generate-prompts` run for a 6-scene, 60-second video took 5
+real LLM round-trips (`read_project` → `create_prompt_plan` →
+`create_story_structure` → `generate_scene_prompts` → `read_project`), and
+an `assemble` run correctly stopped mid-pipeline to ask the user how to
+resolve an ambiguously-named upload rather than guessing, then finished the
+full render → narration → music → subtitles → validate chain in one
+follow-up turn once confirmed.
 
 **Cancellation**: `VideoAgent` keeps an `AbortController` per in-flight
 project turn; `POST /api/projects/:id/cancel` aborts it, and `AgentLoop`
@@ -377,7 +378,7 @@ arrived in order (`agent_started` → `agent_state_changed(ANALYZING)` →
 `tool_called` → `tool_completed` → `agent_state_changed(IDLE)` →
 `project_completed`).
 
-**Error handling**: every layer (LLM, tool, provider, ffmpeg, filesystem,
+**Error handling**: every layer (LLM, tool, ffmpeg, upload, filesystem,
 database) throws a typed `AppError` with `{ code, message, retryable,
 details }` ([server/src/utils/errors.ts](server/src/utils/errors.ts)).
 `ToolExecutor` catches these and always returns a structured
@@ -398,63 +399,62 @@ with regression tests locking in the exact failures observed live
 
 ## Tool reference
 
-Tools registered so far (Phases 2–5, 9) — see
-[server/src/tools/index.ts](server/src/tools/index.ts) for the live list:
+Tools registered — see [server/src/tools/index.ts](server/src/tools/index.ts)
+for the live list:
+
+**Prompt generation**
 
 | Tool | Purpose |
 |---|---|
-| `read_project` | Inspect current project config, scenes, characters |
-| `update_project` | Change config fields (duration, style, audience, ...) |
-| `analyze_request` | Extract structured config from a freeform request |
-| `create_video_plan` | Produce objective + scene count + **Style Bible** |
+| `read_project` | Inspect current config, scenes/prompts, bibles, media library, timeline, latest render |
+| `update_project` | Change config fields (duration, mediaType, clip/imageDurationSec, aspectRatio, style, audience, ...) |
+| `analyze_request` | Extract structured config (incl. mediaType/duration/clip-or-image-duration) from a freeform request |
+| `create_prompt_plan` | Objective + **Style Bible** + deterministically-computed scene count (`targetDuration / clipOrImageDuration`) |
 | `update_style_bible` | Edit the Style Bible directly |
-| `update_character_bible` | Create/edit a **Character Bible** entry |
-| `generate_script` | Write narration-level scenes + identify recurring characters |
-| `create_scene_plan` | Batch-enrich every scene with prompts/direction (one call, all scenes) |
-| `generate_visual_prompt` / `generate_video_prompt` | Regenerate one scene's image/video prompt |
-| `update_scene` | Direct field edit on one scene |
-| `generate_image` | Generate a scene's still image (provider-backed, cached, versioned, `force` bypasses cache) |
-| `generate_video` | Generate a scene's video clip (provider-backed, cached, versioned, `force` bypasses cache) |
-| `generate_voice` | Generate narration audio for a scene or standalone text (cached, versioned, `force` bypasses cache) |
-| `generate_all_scene_media` | Generate video+voice for every scene (or a subset) in ONE call - preferred over per-scene calls for the initial full pipeline |
-| `generate_music` | Generate a project-level background music bed |
-| `list_assets` | Check what's already been generated |
-| `merge_videos` | Concatenate every scene's video, in order, into one silent video |
-| `add_audio` | Concatenate + mux every scene's narration onto the merged video |
-| `add_music` | Mix the music bed under the narration and re-mux |
-| `generate_subtitles` | Write SRT + WebVTT timed from each scene's actual narration length |
-| `add_subtitles` | Burn in or soft-mux subtitles, producing `renders/final.mp4` |
+| `update_character_bible` / `update_environment_bible` | Create/edit a **Character** or **Environment Bible** entry |
+| `create_story_structure` | Per-scene beat/summary (+ narration if required) + recurring characters/environments + story context, in internal batches |
+| `generate_scene_prompts` | Batch-fill every scene's final image/video prompt, branching on mediaType, in internal batches |
+| `regenerate_scene_prompt` | Regenerate one scene's prompt (writes a new **PromptVersion**) |
+| `update_scene` | Direct field edit on one scene (also versions the prompt fields) |
+| `add_scenes` / `remove_scene` / `move_scene` | Extend, remove, or reorder scenes ("add 5 more scenes", "generate another 2 minutes") |
+
+**Upload & assembly** (media is always user-uploaded, never generated by this app)
+
+| Tool | Purpose |
+|---|---|
+| `list_media` / `inspect_media` | Check what's been uploaded and its probed technical details |
+| `match_media_to_scene` | Auto-match unassigned uploads to scenes by filename; returns ambiguous ones to ask the user about |
+| `assign_media_to_scene` / `replace_media` / `remove_media` / `reorder_media` | Place, swap, drop, or reorder timeline items |
+| `set_image_duration` | Set one or every image's display duration |
+| `set_audio_track` | Adjust the uploaded narration/music track's volume/fades, or remove it from assembly |
+| `build_timeline` | Recompute ordering/timing across the whole timeline |
+| `render_timeline` | Normalize every item (image→video, fit/crop/blur, trim) and concatenate into one silent video |
+| `add_narration` / `add_music` | Mux the uploaded narration/music track in (each a no-op to skip if nothing was uploaded) |
+| `generate_subtitles` / `add_subtitles` | Write SRT/VTT from scene narration/on-screen text, then burn in or soft-mux them |
 | `create_thumbnail` | Extract a frame from the best-available render as a versioned thumbnail |
-| `validate_video` | ffprobe-based validation of the final render; sets project READY or FIXING |
-| `generate_youtube_metadata` | Title/description/tags/hashtags/thumbnail prompt + (by default) a rendered thumbnail image - never uploads anything |
+| `validate_video` | ffprobe-based validation of the final render; records a **Render** row; audio is only required if a track was actually uploaded |
 
-Caching: before generating, `generate_image`/`generate_video`/
-`generate_voice`/`generate_music` hash the generation parameters
-(`AssetService.computeGenerationHash`) and reuse an identical prior
-`COMPLETED` asset instead of regenerating (spec'd caching behavior). Pass
-`force: true` to skip the cache and always create a new version - this is
-what the UI's scene "regenerate" buttons and the agent's own "regenerate
-scene N" handling use, so an explicit regenerate request always produces a
-genuinely new asset rather than silently returning the same one.
-Versioning: every real generation creates a new `Asset` row and a new,
-separately-named file (`scene-01-v1.mp4`, `scene-01-v2.mp4`, ...) - nothing
-overwrites a prior version's file. `VIDEO` assets also update the scene's
-`activeAssetId`; `THUMBNAIL` assets share one version counter per project
-regardless of whether they came from `create_thumbnail` or
-`generate_youtube_metadata`, so `GET /thumbnail` always serves "whichever
-ran most recently."
+No tool ever calls an image/video/TTS/music generation API - there isn't
+one. `generate_scene_prompts`/`create_story_structure` process scenes in
+internal batches of ~10-12 so a 100+ scene (30+ minute) project is still
+one tool call/one agent iteration, not one-per-scene.
 
-The assembly pipeline (`merge_videos` → `add_audio` → `add_music` →
+Versioning: `PromptVersion` snapshots a scene's prompt fields before every
+overwrite (batch generation, regenerate, or a direct edit), the same way
+`Asset` already versions internally-produced thumbnails - nothing is ever
+silently lost, and a version can be restored
+(`POST /scenes/:id/prompt-versions/:versionId/activate`). `TimelineItem`
+rows are soft-deleted (`active: false`) on remove/replace, so uploaded
+media history is preserved too.
+
+The assembly pipeline (`render_timeline` → `add_narration` → `add_music` →
 `generate_subtitles` → `add_subtitles` → `validate_video`) writes to fixed,
 well-known paths under `renders/` (see
 [server/src/services/RenderPaths.ts](server/src/services/RenderPaths.ts))
-so each stage can find the most complete render available and tell the
-agent exactly which prior step is missing if run out of order.
-
-Not implemented: `regenerate_scene` as a distinct tool name (covered by
-re-calling `generate_video`/`generate_voice`/`generate_visual_prompt`
-directly, or via `POST /scenes/:id/regenerate`); actual YouTube upload
-(spec #35 explicitly excludes this from V1).
+so each stage can find the most complete render available; every step
+except `render_timeline`/`validate_video` is optional and skipped cleanly
+when nothing applies (no narration/music uploaded, no on-screen text for
+subtitles).
 
 ## API reference
 
@@ -467,22 +467,39 @@ Implemented so far:
 | POST | `/api/projects` | Create a project |
 | GET | `/api/projects` | List projects |
 | GET | `/api/projects/:id` | Get one project |
-| DELETE | `/api/projects/:id` | Delete a project (DB row + files) |
+| PATCH | `/api/projects/:id` | Direct config edit (no LLM involved) - what the Prompt Generator form uses |
+| DELETE | `/api/projects/:id` | Delete a project (DB rows + files) |
 | POST | `/api/projects/:id/chat` | Send a chat turn to the agent |
 | GET | `/api/projects/:id/chat` | Get chat history |
-| POST | `/api/projects/:id/generate` | Run the full pipeline via a canned instruction (the UI's "Generate Full Video" button) |
+| POST | `/api/projects/:id/generate-prompts` | Canned instruction: run the prompt-generation pipeline from its current state |
+| POST | `/api/projects/:id/assemble` | Canned instruction: match uploads, render, mux audio, subtitles, validate |
 | POST | `/api/projects/:id/cancel` | Cancel the in-flight turn |
 | GET | `/api/projects/:id/status` | Agent state + recent logs/tasks |
-| GET | `/api/projects/:id/scenes` | List scenes |
-| PATCH | `/api/projects/:id/scenes/:sceneId` | Direct field edit on a scene (no LLM involved) |
-| POST | `/api/projects/:id/scenes/:sceneId/regenerate` | Force-regenerate one scene's video/voice/image (bypasses the cache, always creates a new version) |
-| GET | `/api/projects/:id/assets` | List assets, optionally filtered by `sceneId`/`type` |
+| GET | `/api/projects/:id/renders/latest` | Latest assembly result (duration/resolution/aspect ratio/item count/size/validation) |
+| GET | `/api/projects/:id/scenes` | List scenes/prompts |
+| POST | `/api/projects/:id/scenes` | Add scene(s) directly |
+| PATCH | `/api/projects/:id/scenes/:sceneId` | Direct field edit on a scene |
+| DELETE | `/api/projects/:id/scenes/:sceneId` | Remove a scene directly |
+| POST | `/api/projects/:id/scenes/:sceneId/move` | Reorder a scene directly |
+| POST | `/api/projects/:id/scenes/:sceneId/regenerate` | Regenerate one scene's prompt directly |
+| GET | `/api/projects/:id/scenes/:sceneId/prompt-versions` | List a scene's prompt version history |
+| POST | `/api/projects/:id/scenes/:sceneId/prompt-versions/:versionId/activate` | Restore a prior prompt version |
+| GET | `/api/projects/:id/assets` | List internal artifacts (subtitles/thumbnails), optionally filtered by `type` |
+| GET | `/api/projects/:id/media` | List the uploaded media library |
+| POST | `/api/projects/:id/upload` | Upload one or more image/video files (multipart `files`) |
+| GET | `/api/projects/:id/audio-tracks` | Currently active narration/music tracks |
+| POST | `/api/projects/:id/upload-audio` | Upload a narration or music file (multipart `file`, body `kind`) |
+| POST | `/api/projects/:id/upload-subtitles` | Upload a ready-made `.srt` directly |
+| GET | `/api/projects/:id/timeline` | List the ordered assembly timeline |
+| POST | `/api/projects/:id/timeline/assign` | Assign an uploaded file to a scene (or append unassigned) |
+| POST | `/api/projects/:id/timeline/:itemId/replace` | Swap which file backs a timeline slot |
+| POST | `/api/projects/:id/timeline/:itemId/reorder` | Move a timeline item before/after another |
+| PATCH | `/api/projects/:id/timeline/:itemId` | Set display duration / fit mode / trim |
+| DELETE | `/api/projects/:id/timeline/:itemId` | Remove a timeline item (soft delete) |
 | GET | `/api/projects/:id/video` | Streams the best-available render (final, else the most complete intermediate stage); supports HTTP Range requests |
 | GET | `/api/projects/:id/thumbnail` | Streams the thumbnail image |
 | GET | `/api/projects/:id/files/*` | Safety-scoped access to any file inside the project's storage directory |
 | GET | `/api/projects/:id/events` | Server-Sent Events stream of live agent activity (`agent_started`, `agent_state_changed`, `tool_called`, `tool_completed`, `error`, `project_completed`) |
-| GET | `/api/projects/:id/scenes/:sceneId/versions` | List every generated version of a scene's asset (`?type=VIDEO\|IMAGE\|VOICE`, defaults to `VIDEO`) |
-| POST | `/api/projects/:id/scenes/:sceneId/versions/:assetId/activate` | Switch which version is active (VIDEO only - that's what assembly reads) |
 
 ## Troubleshooting
 
@@ -505,31 +522,32 @@ install`** — an npm optional-dependency resolution flake we hit a couple of
 times during development. Fix: `rm -rf node_modules package-lock.json
 client/node_modules server/node_modules && npm install`.
 
-**"Exceeded max iterations (N)"** — a real bug we hit and fixed live: asked
-for an "alphabet" video in 60 seconds, the model wrote one scene per letter
-(26 scenes at 2.3s each), and since each scene needed its own
-`generate_video`/`generate_voice` call, that alone used up more iterations
-than the loop allowed. Fixed with three changes, all already in place:
-1. `generate_script` now clamps scene count so no scene can average under
-   4 seconds, and is told explicitly to group multiple items into one
-   scene (e.g. "A is for Apple, B is for Ball") rather than shrinking
-   scenes to fit everything.
-2. `generate_all_scene_media` generates every scene's video+voice in ONE
-   tool call instead of one call per scene per media type - the agent is
-   now instructed to prefer it for the initial full-pipeline run.
-3. `MAX_AGENT_ITERATIONS` default raised from 50 to 100 as a safety net.
+**An uploaded clip didn't auto-match its scene** — filename matching (spec:
+`scene-01.mp4`, `scene_01.mp4`, `01.mp4`, `01-scene.mp4`) only auto-assigns
+on a high-confidence match; anything else (e.g. `cow_final.mp4`) is left
+for `match_media_to_scene`/the Upload & Assemble tab's "Assign to scene"
+dropdown to resolve deliberately rather than guessing wrong.
 
-If you still hit this on an unusually long/complex video, the request
-itself may need to be split (e.g. ask for a shorter duration, or fewer
-distinct topics) - the agent will now group content rather than silently
-producing unwatchably short scenes, but very dense topics still have a
-real limit to how much fits in a given duration.
+**"Exceeded max iterations (N)" on a very long/many-scene request** —
+`generate_scene_prompts`/`create_story_structure` already process scenes in
+internal batches of ~10-12 (one tool call regardless of scene count), so
+this should be rare; if it still happens on an unusually long request,
+`MAX_AGENT_ITERATIONS` can be raised in `.env`, or the request split into a
+smaller initial duration plus a follow-up `add_scenes` call.
 
 **Prisma can't find `DATABASE_URL`** — `server/.env` and `client/.env` are
 symlinks to the root `.env`; if you deleted them, recreate with
 `ln -sf ../.env server/.env` (and the same for `client/`).
 
 ## Progress
+
+Phases 1–9 built and validated the original prototype, which had the agent
+*generate* mock media itself via provider interfaces. Phase 10 replaced
+that workflow entirely with the prompt-generation + upload/assembly studio
+described throughout this README - the provider interfaces, mock adapters,
+and generation tools mentioned in Phases 4/5/6/7/9 below no longer exist in
+the codebase; they're kept here as an accurate history of how the app got
+to its current architecture.
 
 - [x] **Phase 1** — Project scaffold; React/Node/TypeScript/SQLite/FFmpeg set
       up; live-verified React → Node → `OllamaClient` → Ollama Cloud →
@@ -621,6 +639,36 @@ symlinks to the root `.env`; if you deleted them, recreate with
       `thumbnail-v2.png` and `thumbnail-v3.png` as genuinely different
       files, both independently retained.
 
-72/72 automated tests passing (`npm run test`), clean `npm run typecheck`
-and `npm run build` across both workspaces. 8 of 9 phases complete (Phase
-8 intentionally deferred - see above).
+- [x] **Phase 10** — Full pivot to the conversational prompt & media
+      assembly studio described throughout this README, per an explicit
+      product-spec rewrite request. Deleted the provider layer and every
+      mock generation tool (`generate_image/video/voice/music`,
+      `generate_all_scene_media`, `generate_youtube_metadata`) and the
+      old `merge_videos`/`add_audio` implementations entirely - confirmed
+      decision was to remove rather than hide them. Added: deterministic
+      scene-count/timing math (`utils/sceneMath.ts`, no fixed duration cap,
+      verified for 30s through 30-minute/180-scene projects); a two-stage
+      prompt pipeline (`create_prompt_plan` → `create_story_structure` →
+      `generate_scene_prompts`, batched internally for scale) that branches
+      on `mediaType` (VIDEO vs IMAGE) and writes continuity via Style/
+      Character/Environment Bibles + a persisted story context;
+      `PromptVersion` history with restore; `MediaAsset`/`TimelineItem`/
+      `AudioTrack`/`Render` models and matching services
+      (`MediaUploadService` with filename-based scene matching,
+      `TimelineService` for ordering/timing); new `FFmpegService` methods
+      (`imageToVideo`, `normalizeVideoClip`, `prepareMusicTrack`) supporting
+      FIT/CROP/BLUR_BACKGROUND so mixed aspect-ratio uploads are never
+      stretched; multer-based upload routes; and the tabbed Prompts/Upload
+      &amp; Assemble/Final Render right panel. Live-verified end-to-end
+      twice against the real model and real ffmpeg: a 60s/6-scene video
+      project (upload → auto-match all 6 by filename → assemble with no
+      audio uploaded → validated 1920×1080 MP4, exactly per spec "still
+      assemble successfully" with no audio); and a 15s/3-scene image
+      project with `narrationRequired`/`musicRequired` (ambiguous filename
+      matches correctly triggered the agent to ask the user instead of
+      guessing, a mid-turn tool failure was self-corrected via `list_media`
+      before retrying, and the final render came back 1080×1080 with
+      video+AAC audio+soft subtitles, all confirmed via `ffprobe`).
+
+83/83 automated tests passing (`npm run test`), clean `npm run typecheck`
+and `npm run build` across both workspaces.

@@ -16,12 +16,12 @@ export default function App() {
 
   const workspace = useProjectWorkspace(selectedId);
 
-  // "Create from prompt" needs to send that prompt as the first chat
-  // message through the SAME path a normal send uses (loading state, live
-  // status polling, etc) - but `workspace` only starts pointing at the new
-  // project once `selectedId` changes and this component re-renders, so
-  // the send is deferred via this pending-ref + effect rather than fired
-  // directly inside the create handler.
+  // "Describe it" needs to send that prompt as the first chat message
+  // through the SAME path a normal send uses (loading state, live status
+  // polling, etc) - but `workspace` only starts pointing at the new project
+  // once `selectedId` changes and this component re-renders, so the send
+  // is deferred via this pending-ref + effect rather than fired directly
+  // inside the create handler.
   const pendingInitialPrompt = useRef<{ projectId: string; prompt: string } | null>(null);
 
   useEffect(() => {
@@ -42,7 +42,7 @@ export default function App() {
       } else if (submission.mode === "prompt" && submission.prompt) {
         // Create a minimal project, then let the agent's analyze_request /
         // update_project tools fill in the real configuration from the
-        // freeform prompt (spec #11 "Create from prompt").
+        // freeform prompt and generate its prompt package.
         const derivedTitle = submission.prompt.length > 60 ? `${submission.prompt.slice(0, 57)}...` : submission.prompt;
         const project = await createProject({ title: derivedTitle, topic: submission.prompt });
         pendingInitialPrompt.current = { projectId: project.id, prompt: submission.prompt };
@@ -97,11 +97,25 @@ export default function App() {
               <PreviewPanel
                 project={workspace.project}
                 scenes={workspace.scenes}
-                assets={workspace.assets}
+                mediaLibrary={workspace.mediaLibrary}
+                timeline={workspace.timeline}
+                audioTracks={workspace.audioTracks}
+                latestRender={workspace.latestRender}
                 sending={workspace.sending}
-                onGenerate={workspace.triggerGenerate}
-                onRegenerateScene={workspace.regenerateScene}
-                onActivateVersion={workspace.activateVersion}
+                onUpdateConfig={workspace.updateProjectConfig}
+                onGeneratePrompts={workspace.generatePrompts}
+                onRegenerateScenePrompt={workspace.regenerateScenePrompt}
+                onDeleteScene={workspace.deleteScene}
+                onMoveScene={workspace.moveScene}
+                onAddScenes={workspace.addScenes}
+                onUploadFiles={workspace.uploadFiles}
+                onUploadAudio={workspace.uploadAudio}
+                onAssignMedia={workspace.assignMedia}
+                onRemoveTimelineItem={workspace.removeTimelineItem}
+                onReorderTimelineItem={workspace.reorderTimelineItem}
+                onPatchTimelineItem={workspace.patchTimelineItem}
+                onAssemble={workspace.assemble}
+                onRefresh={workspace.refreshAll}
               />
             </>
           )}

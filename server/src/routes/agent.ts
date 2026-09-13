@@ -6,18 +6,28 @@ import { AppError } from "../utils/errors.js";
 
 export const agentRouter = Router({ mergeParams: true });
 
-const FULL_PIPELINE_INSTRUCTION =
-  "Create the complete video from its current state: if planning/script/scenes aren't done yet, do those first; then use generate_all_scene_media (NOT one-by-one generate_video/generate_voice calls) to generate video and narration for every scene, plus generate_music for background music; then assemble (merge_videos, add_audio, add_music, generate_subtitles, add_subtitles) and validate the final video. Skip any step that's already done (a quick list_assets/read_project check is enough - do not repeat planning steps that already succeeded).";
+const GENERATE_PROMPTS_INSTRUCTION =
+  "Generate (or continue generating) the video/image prompts for this project from its current state: if the config isn't set yet, analyze_request/update_project first; then create_prompt_plan (unless it already ran - check the Style Bible in read_project), then create_story_structure, then generate_scene_prompts for every scene. Skip any step that's already done - a quick read_project check is enough, do not repeat steps that already succeeded. Never generate any actual media yourself - only prompts.";
 
-/**
- * Convenience endpoint (spec #33 POST /generate) for a UI "Generate Video"
- * button - runs the exact same VideoAgent.handleChatMessage path as a
- * typed chat message, so it's recorded in chat history like any other turn.
- */
-agentRouter.post("/generate", async (req, res) => {
+const ASSEMBLE_INSTRUCTION =
+  "Assemble the final video from the current timeline: first match_media_to_scene to resolve any ambiguous uploads (ask the user about any that remain ambiguous instead of guessing), then render_timeline, then add_narration and add_music ONLY if the corresponding audio track has actually been uploaded (read_project shows audioTracks), then generate_subtitles and add_subtitles ONLY if scenes have narration/on-screen text, then validate_video always last. Skip any step that's already done or not applicable rather than treating it as a failure.";
+
+/** Convenience endpoints for the UI's "Generate Prompts" / "Assemble Video" buttons - same VideoAgent.handleChatMessage path as a typed chat message, so it's recorded in chat history like any other turn. */
+agentRouter.post("/generate-prompts", async (req, res) => {
   try {
     const { id: projectId } = req.params as { id: string };
-    const result = await videoAgent.handleChatMessage(projectId, FULL_PIPELINE_INSTRUCTION);
+    const result = await videoAgent.handleChatMessage(projectId, GENERATE_PROMPTS_INSTRUCTION);
+    res.json(result);
+  } catch (err) {
+    const appErr = AppError.from(err);
+    res.status(appErr.code === "NOT_FOUND" ? 404 : 500).json({ error: appErr.toJSON() });
+  }
+});
+
+agentRouter.post("/assemble", async (req, res) => {
+  try {
+    const { id: projectId } = req.params as { id: string };
+    const result = await videoAgent.handleChatMessage(projectId, ASSEMBLE_INSTRUCTION);
     res.json(result);
   } catch (err) {
     const appErr = AppError.from(err);
@@ -50,4 +60,21 @@ agentRouter.get("/status", async (req, res) => {
     const appErr = AppError.from(err);
     res.status(appErr.code === "NOT_FOUND" ? 404 : 500).json({ error: appErr.toJSON() });
   }
+});
+
+/** Latest assembly result (spec: preview + duration/resolution/aspect ratio/item count/file size/validation). */
+agentRouter.get("/renders/latest", async (req, res) => {
+  const { id: projectId } = req.params as { id: string };
+  const render = await prisma.render.findFirst({ where: { projectId }, orderBy: { createdAt: "desc" } });
+  if (!render) {
+    res.json(null);
+    return;
+  }
+  let validationIssues: string[] = [];
+  try {
+    validationIssues = JSON.parse(render.validationIssues);
+  } catch {
+    /* ignore */
+  }
+  res.json({ ...render, validationIssues });
 });

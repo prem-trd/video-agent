@@ -25,7 +25,7 @@ const InputSchema = z
 export const updateCharacterBibleTool: Tool<z.infer<typeof InputSchema>> = {
   name: "update_character_bible",
   description:
-    "Create or update a Character Bible entry (name, appearance, personality, etc). Only pass the fields that should change. Existing scene prompts are not automatically rewritten - call generate_visual_prompt for affected scenes afterwards if needed.",
+    "Create or update a Character Bible entry (name, appearance, personality, etc). Only pass the fields that should change. Existing scene prompts are not automatically rewritten - call regenerate_scene_prompt for affected scenes afterwards if needed.",
   inputSchema: InputSchema,
   retryable: true,
   async execute(input, ctx) {

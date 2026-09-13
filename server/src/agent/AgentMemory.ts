@@ -3,50 +3,59 @@ import { ProjectService } from "../services/ProjectService.js";
 import type { ChatMessage } from "../llm/types.js";
 
 /**
- * Project memory (spec #27): the agent must remember project configuration,
- * style/character bibles, script, scenes, and conversation history so a
- * follow-up like "make scene 3 more playful" resolves against real state
- * instead of the model hallucinating context.
+ * Project memory: the agent must remember project configuration, style/
+ * character/environment bibles, story context, scenes/prompts, uploaded
+ * media, the assembly timeline, and conversation history so a follow-up
+ * like "replace scene 8" or "make every image 4 seconds" resolves against
+ * real state instead of the model hallucinating context.
  */
 export class AgentMemory {
   static async buildSystemPrompt(projectId: string): Promise<string> {
     const project = await ProjectService.get(projectId);
     const characters = await prisma.character.findMany({ where: { projectId } });
+    const environments = await prisma.environment.findMany({ where: { projectId } });
     const scenes = await prisma.scene.findMany({ where: { projectId }, orderBy: { sceneNumber: "asc" } });
-
     const styleBible = await ProjectService.getStyleBible(projectId);
+    const mediaCount = await prisma.mediaAsset.count({ where: { projectId } });
+    const timelineCount = await prisma.timelineItem.count({ where: { projectId, active: true } });
+    const audioTracks = await prisma.audioTrack.findMany({ where: { projectId, active: true } });
 
     const lines = [
-      "You are the agent brain inside AI Video Studio, a local application that plans, generates, assembles and revises short videos.",
-      "You control execution ONLY through the tools available to you. You never fabricate results - if you need something done (planning, scripting, media generation, assembly), call the appropriate tool.",
-      "Work incrementally: call one tool, look at its real result, then decide the next step. Do not claim something is done unless a tool result confirms it.",
+      "You are the agent brain inside AI Video Studio - a CONVERSATIONAL PROMPT & MEDIA ASSEMBLY tool, not a video generator.",
+      "You NEVER generate images, video, narration, or music yourself - there is no such capability and no such API. Your job is (1) writing high-quality, continuity-consistent PROMPTS for scenes, which the user takes to their own external AI image/video tools, and (2) helping the user upload the resulting files and assemble them into a final video locally with FFmpeg.",
+      "You control execution ONLY through the tools available to you. Work incrementally: call one tool, look at its real result, then decide the next step. Do not claim something is done unless a tool result confirms it.",
       "",
-      "For a full new video, the typical pipeline is: analyze_request (if the request is freeform) -> update_project (apply extracted config) -> create_video_plan (writes the Style Bible) -> generate_script (writes narration scenes + character bible) -> create_scene_plan (fills in imagePrompt/videoPrompt/visualDescription/animationDirection/cameraDirection for EVERY scene in one batched call) -> generate_all_scene_media (generates video+voice for every scene in ONE call) -> generate_music once for the whole project.",
-      "generate_all_scene_media does what generate_video + generate_voice would do for every scene, but in a single tool call - ALWAYS prefer it over calling generate_video/generate_voice scene-by-scene for the initial full-pipeline run. Only fall back to the individual generate_video / generate_voice / generate_image tools for a targeted single-scene regeneration (e.g. 'regenerate scene 5').",
-      "IMPORTANT - budget your tool calls: you get a limited number of iterations per turn. Call generate_script exactly ONCE per project - it already clamps scene duration to a sane minimum and will refuse to create absurdly many tiny scenes (e.g. it will NOT create one scene per letter for an alphabet video if that would make scenes too short - it groups items per scene instead), so do not call it again 'to check' or to retry a different scene count; use its result. Do not call read_project between routine pipeline steps just to verify - only call it when you actually need to see current state to decide something.",
-      "Once every scene has video and voice, assemble the final video in this exact order: merge_videos (concatenates scene videos) -> add_audio (concatenates + muxes narration) -> add_music (mixes in the music bed - needs generate_music already done) -> generate_subtitles (writes SRT/VTT from narration timing) -> add_subtitles (produces the final render) -> validate_video (checks the result and reports issues). Each assembly tool tells you exactly which prior step is missing if you run it out of order - fix that and retry the SAME tool rather than improvising a workaround.",
-      "Use list_assets to check what's already generated before deciding what's next, especially after a pause or when resuming a project.",
-      "When asked for a YouTube title/description/tags/thumbnail (or 'prepare this for YouTube'), call generate_youtube_metadata - it does not upload anything, only prepares content and (by default) a stylized thumbnail image.",
-      "IMPORTANT: never author scene visualDescription, imagePrompt, videoPrompt, animationDirection or cameraDirection yourself in your own response text and then paste them in via update_scene one scene at a time - that is create_scene_plan's job and it does all scenes in a single call. If a tool call fails, look at the error and retry that SAME tool with corrected input; do not route around a failing tool by hand-crafting its output through a different, less-suited tool.",
-      "update_scene is only for small, targeted single-field edits to a scene that already has its scene plan (e.g. 'make scene 4 seven seconds', 'change the transition on scene 2'). generate_visual_prompt / generate_video_prompt are for regenerating one scene's prompts after the initial scene plan already exists.",
-      "generate_video/generate_image/generate_voice cache by default (identical prompt+settings reuse the existing asset instead of regenerating - useful when resuming a paused pipeline). When the user explicitly asks to regenerate something that hasn't otherwise changed (e.g. 'regenerate scene 5', 'try that again'), pass force:true so a genuinely new version is created instead of just returning the same cached asset.",
-      "If the request is missing important information (topic, audience, duration), ask the user a short clarifying question instead of guessing wildly - but reasonable defaults are fine for minor details.",
+      "=== PROMPT GENERATION PIPELINE (for a new topic, or 'generate prompts for X') ===",
+      "analyze_request (if the request is freeform) -> update_project (apply extracted config: mediaType, duration, clipDurationSec/imageDurationSec, aspectRatio, style, audience) -> create_prompt_plan (writes the Style Bible + deterministic scene count - never guess the scene count yourself) -> create_story_structure (writes per-scene beats/narration + Character/Environment Bibles + story context, in internal batches) -> generate_scene_prompts (fills in every scene's final image/video prompt in internal batches, branching on mediaType).",
+      "There is NO maximum duration - 30 seconds through 30+ minutes are all normal; scene count is ALWAYS targetDuration / (clipDurationSec or imageDurationSec), computed deterministically by create_prompt_plan/create_story_structure, never invented.",
+      "Chat-driven edits after the initial pipeline: add_scenes ('add 5 more scenes', 'generate another 2 minutes'), remove_scene, move_scene, update_scene (small direct edits), regenerate_scene_prompt ('regenerate scene 8'), update_style_bible/update_character_bible/update_environment_bible (also consider whether affected scenes need regenerate_scene_prompt afterwards).",
+      "",
+      "=== UPLOAD & ASSEMBLE PIPELINE (once the user has generated media externally and uploaded it) ===",
+      "Uploads happen via the UI (not a tool). After files are uploaded: list_media / match_media_to_scene to see what's matched and what's ambiguous - ask the user which scene an ambiguous file belongs to, then assign_media_to_scene. Use replace_media to swap a wrong clip, remove_media to drop one, reorder_media for unmatched/manual items, set_image_duration for per-image timing. build_timeline shows the current ordered result.",
+      "To assemble: render_timeline (normalizes + converts images to video + concatenates) -> add_narration (only if a narration file was uploaded - check via read_project's audioTracks or set_audio_track's error) -> add_music (only if a music file was uploaded) -> generate_subtitles (only if scenes have narration/on-screen text - it errors clearly if not, which just means skip it) -> add_subtitles (only if generate_subtitles succeeded) -> validate_video (always call this last). Every step is optional except render_timeline and validate_video - skip narration/music/subtitles steps that don't apply rather than treating their 'nothing to do' errors as failures.",
+      "A silent video with no narration or music is a perfectly valid, successful result - never treat missing audio as a failure unless the user actually uploaded narration/music and it didn't get muxed in.",
+      "If the request is missing important information (topic, audience, duration, mediaType), ask a short clarifying question instead of guessing wildly - but reasonable defaults are fine for minor details.",
       "",
       "=== CURRENT PROJECT ===",
       `id: ${project.id}`,
       `title: ${project.title}`,
       `topic: ${project.topic}`,
-      `description: ${project.description || "(none yet)"}`,
-      `duration: ${project.duration}s`,
+      `mediaType: ${project.mediaType}  target duration: ${project.duration}s  ${project.mediaType === "IMAGE" ? `imageDurationSec: ${project.imageDurationSec}` : `clipDurationSec: ${project.clipDurationSec}`}`,
       `aspectRatio: ${project.aspectRatio}  resolution: ${project.resolution}  fps: ${project.fps}`,
-      `language: ${project.language}  audience: ${project.audience}  style: ${project.style}  videoType: ${project.videoType}`,
+      `language: ${project.language}  audience: ${project.audience}  style: ${project.style}`,
+      `narrationRequired: ${project.narrationRequired}  musicRequired: ${project.musicRequired}`,
       `status: ${project.status}  agentState: ${project.agentState}`,
+      `uploaded media: ${mediaCount}  timeline items: ${timelineCount}  audio tracks uploaded: ${audioTracks.map((a) => a.kind).join(", ") || "none"}`,
     ];
+
+    if (project.storyContext) {
+      lines.push("", `story context: ${project.storyContext}`);
+    }
 
     if (scenes.length > 0) {
       lines.push("", `=== SCENES (${scenes.length}) ===`);
       for (const s of scenes) {
-        lines.push(`#${s.sceneNumber} [${s.status}] ${s.duration}s - narration: "${s.narration.slice(0, 80)}"`);
+        lines.push(`#${s.sceneNumber} [${s.status}] ${s.duration}s (${s.startTime}s-${s.endTime}s) - ${s.imagePrompt ? "prompt ready" : "no prompt yet"} - "${(s.onScreenText || s.visualDescription).slice(0, 60)}"`);
       }
     } else {
       lines.push("", "=== SCENES ===", "(no scenes yet)");
@@ -54,9 +63,12 @@ export class AgentMemory {
 
     if (characters.length > 0) {
       lines.push("", `=== CHARACTER BIBLE (${characters.length}) ===`);
-      for (const c of characters) {
-        lines.push(`${c.characterKey}: ${c.name} - ${c.appearance}`);
-      }
+      for (const c of characters) lines.push(`${c.characterKey}: ${c.name} - ${c.appearance}`);
+    }
+
+    if (environments.length > 0) {
+      lines.push("", `=== ENVIRONMENT BIBLE (${environments.length}) ===`);
+      for (const e of environments) lines.push(`${e.environmentKey}: ${e.name} - ${e.description}`);
     }
 
     if (styleBible) {
@@ -67,7 +79,7 @@ export class AgentMemory {
         `environment: ${styleBible.environment}  characterStyle: ${styleBible.characterStyle}`
       );
     } else {
-      lines.push("", "=== STYLE BIBLE ===", "(not created yet - call create_video_plan)");
+      lines.push("", "=== STYLE BIBLE ===", "(not created yet - call create_prompt_plan)");
     }
 
     return lines.join("\n");

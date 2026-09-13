@@ -1,23 +1,25 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../services/api";
 import { useAgentEvents } from "./useAgentEvents";
-import type { AgentStatus, Asset, ChatMessage, Project, Scene } from "../types/api";
+import type { AgentStatus, AudioTrack, ChatMessage, MediaAsset, Project, Render, Scene, TimelineItem } from "../types/api";
 
 /**
- * Everything one selected project's UI panels need: project config, scenes,
- * assets, chat history, and live agent status. Real-time updates come from
- * the project's SSE event stream (spec #31) rather than polling on a timer
- * - `sending` and the Agent Activity feed both react to
- * agent_started/tool_called/tool_completed/project_completed/error events
- * pushed the moment AgentLoop/VideoAgent publish them, with a DB-backed
- * refresh (GET /status, /scenes, /assets) triggered alongside so the data
- * shown is always the authoritative server state, not a reconstruction of
- * the lightweight event payloads.
+ * Everything one selected project's UI panels need: project config, scenes/
+ * prompts, uploaded media library, the assembly timeline, chat history, and
+ * live agent status. Real-time updates come from the project's SSE event
+ * stream rather than polling on a timer - `sending` and the Agent Activity
+ * feed both react to agent_started/tool_called/tool_completed/
+ * project_completed/error events pushed the moment AgentLoop/VideoAgent
+ * publish them, with a DB-backed refresh triggered alongside so the data
+ * shown is always the authoritative server state.
  */
 export function useProjectWorkspace(projectId: string | null) {
   const [project, setProject] = useState<Project | null>(null);
   const [scenes, setScenes] = useState<Scene[]>([]);
-  const [assets, setAssets] = useState<Asset[]>([]);
+  const [mediaLibrary, setMediaLibrary] = useState<MediaAsset[]>([]);
+  const [timeline, setTimeline] = useState<TimelineItem[]>([]);
+  const [audioTracks, setAudioTracks] = useState<AudioTrack[]>([]);
+  const [latestRender, setLatestRender] = useState<Render | null>(null);
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
   const [status, setStatus] = useState<AgentStatus | null>(null);
   const [sending, setSending] = useState(false);
@@ -26,15 +28,21 @@ export function useProjectWorkspace(projectId: string | null) {
 
   const refreshAll = useCallback(async () => {
     if (!projectId) return;
-    const [p, s, a, c] = await Promise.all([
+    const [p, s, m, t, a, r, c] = await Promise.all([
       api.getProject(projectId),
       api.getScenes(projectId),
-      api.getAssets(projectId),
+      api.getMediaLibrary(projectId),
+      api.getTimeline(projectId),
+      api.getAudioTracks(projectId),
+      api.getLatestRender(projectId),
       api.getChatHistory(projectId),
     ]);
     setProject(p);
     setScenes(s);
-    setAssets(a);
+    setMediaLibrary(m);
+    setTimeline(t);
+    setAudioTracks(a);
+    setLatestRender(r);
     setChatHistory(c);
   }, [projectId]);
 
@@ -50,7 +58,10 @@ export function useProjectWorkspace(projectId: string | null) {
     if (!projectId) {
       setProject(null);
       setScenes([]);
-      setAssets([]);
+      setMediaLibrary([]);
+      setTimeline([]);
+      setAudioTracks([]);
+      setLatestRender(null);
       setChatHistory([]);
       setStatus(null);
       return;
@@ -87,6 +98,13 @@ export function useProjectWorkspace(projectId: string | null) {
     async (turn: () => Promise<import("../types/api").ChatTurnResult>, optimisticUserMessage?: string) => {
       if (!projectId) return;
       setError(null);
+      // The POST itself doesn't resolve until the whole turn is finished
+      // server-side (it's not streamed), so it's the ground truth for
+      // "is this turn still running" - not the SSE `project_completed`
+      // event, which can be missed if the EventSource reconnects mid-turn
+      // (long turns like generate-prompts/assemble easily take a minute+),
+      // which would otherwise leave `sending` stuck true forever.
+      setSending(true);
       if (optimisticUserMessage) {
         setChatHistory((h) => [
           ...h,
@@ -101,9 +119,9 @@ export function useProjectWorkspace(projectId: string | null) {
         return result;
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err));
-        setSending(false); // the request itself failed (e.g. network) - no project_completed/error event will arrive to clear this
         throw err;
       } finally {
+        setSending(false);
         await Promise.all([refreshAll(), refreshStatus()]).catch(() => {});
       }
     },
@@ -112,22 +130,35 @@ export function useProjectWorkspace(projectId: string | null) {
 
   const sendMessage = useCallback((text: string) => runAgentTurn(() => api.sendChatMessage(projectId!, text), text), [projectId, runAgentTurn]);
 
-  const triggerGenerate = useCallback(
-    () => runAgentTurn(() => api.triggerGenerate(projectId!), "▶ Generate full video"),
+  const generatePrompts = useCallback(
+    () => runAgentTurn(() => api.generatePrompts(projectId!), "▶ Generate Prompts"),
     [projectId, runAgentTurn]
   );
+
+  const assemble = useCallback(() => runAgentTurn(() => api.assemble(projectId!), "▶ Assemble Video"), [projectId, runAgentTurn]);
 
   const cancel = useCallback(async () => {
     if (!projectId) return;
     await api.cancelAgent(projectId);
   }, [projectId]);
 
-  const regenerateScene = useCallback(
-    async (sceneId: string, type: "video" | "voice" | "image") => {
+  // ---- direct (non-LLM) actions - each refreshes the affected slice ----
+
+  const updateProjectConfig = useCallback(
+    async (patch: Partial<Project>) => {
+      if (!projectId) return;
+      await api.updateProject(projectId, patch);
+      await refreshAll();
+    },
+    [projectId, refreshAll]
+  );
+
+  const regenerateScenePrompt = useCallback(
+    async (sceneId: string) => {
       if (!projectId) return;
       setSending(true);
       try {
-        await api.regenerateScene(projectId, sceneId, type);
+        await api.regenerateScenePrompt(projectId, sceneId);
       } finally {
         setSending(false);
         await refreshAll().catch(() => {});
@@ -136,11 +167,101 @@ export function useProjectWorkspace(projectId: string | null) {
     [projectId, refreshAll]
   );
 
-  const activateVersion = useCallback(
-    async (sceneId: string, assetId: string) => {
+  const addScenes = useCallback(
+    async (count: number) => {
       if (!projectId) return;
-      await api.activateSceneVersion(projectId, sceneId, assetId);
-      await refreshAll().catch(() => {});
+      await api.addScenes(projectId, { count });
+      await refreshAll();
+    },
+    [projectId, refreshAll]
+  );
+
+  const deleteScene = useCallback(
+    async (sceneId: string) => {
+      if (!projectId) return;
+      await api.deleteScene(projectId, sceneId);
+      await refreshAll();
+    },
+    [projectId, refreshAll]
+  );
+
+  const moveScene = useCallback(
+    async (sceneId: string, ref: { beforeSceneNumber?: number; afterSceneNumber?: number }) => {
+      if (!projectId) return;
+      await api.moveScene(projectId, sceneId, ref);
+      await refreshAll();
+    },
+    [projectId, refreshAll]
+  );
+
+  const uploadFiles = useCallback(
+    async (files: File[]) => {
+      if (!projectId) return;
+      const result = await api.uploadMedia(projectId, files);
+      await refreshAll();
+      return result;
+    },
+    [projectId, refreshAll]
+  );
+
+  const uploadAudio = useCallback(
+    async (kind: "NARRATION" | "MUSIC", file: File) => {
+      if (!projectId) return;
+      await api.uploadAudio(projectId, kind, file);
+      await refreshAll();
+    },
+    [projectId, refreshAll]
+  );
+
+  const uploadSubtitles = useCallback(
+    async (file: File) => {
+      if (!projectId) return;
+      await api.uploadSubtitles(projectId, file);
+    },
+    [projectId]
+  );
+
+  const assignMedia = useCallback(
+    async (mediaId: string, sceneNumber?: number) => {
+      if (!projectId) return;
+      await api.assignMedia(projectId, mediaId, sceneNumber);
+      await refreshAll();
+    },
+    [projectId, refreshAll]
+  );
+
+  const replaceMedia = useCallback(
+    async (itemId: string, newMediaId: string) => {
+      if (!projectId) return;
+      await api.replaceMedia(projectId, itemId, newMediaId);
+      await refreshAll();
+    },
+    [projectId, refreshAll]
+  );
+
+  const reorderTimelineItem = useCallback(
+    async (itemId: string, ref: { beforeItemId?: string; afterItemId?: string }) => {
+      if (!projectId) return;
+      await api.reorderTimelineItem(projectId, itemId, ref);
+      await refreshAll();
+    },
+    [projectId, refreshAll]
+  );
+
+  const patchTimelineItem = useCallback(
+    async (itemId: string, patch: { displayDurationSec?: number; fitMode?: string; trimStartSec?: number; trimEndSec?: number }) => {
+      if (!projectId) return;
+      await api.patchTimelineItem(projectId, itemId, patch);
+      await refreshAll();
+    },
+    [projectId, refreshAll]
+  );
+
+  const removeTimelineItem = useCallback(
+    async (itemId: string) => {
+      if (!projectId) return;
+      await api.removeTimelineItem(projectId, itemId);
+      await refreshAll();
     },
     [projectId, refreshAll]
   );
@@ -148,17 +269,32 @@ export function useProjectWorkspace(projectId: string | null) {
   return {
     project,
     scenes,
-    assets,
+    mediaLibrary,
+    timeline,
+    audioTracks,
+    latestRender,
     chatHistory,
     status,
     sending,
     loading,
     error,
     sendMessage,
-    triggerGenerate,
+    generatePrompts,
+    assemble,
     cancel,
-    regenerateScene,
-    activateVersion,
+    updateProjectConfig,
+    regenerateScenePrompt,
+    addScenes,
+    deleteScene,
+    moveScene,
+    uploadFiles,
+    uploadAudio,
+    uploadSubtitles,
+    assignMedia,
+    replaceMedia,
+    reorderTimelineItem,
+    patchTimelineItem,
+    removeTimelineItem,
     refreshAll,
   };
 }

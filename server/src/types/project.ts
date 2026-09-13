@@ -3,7 +3,8 @@
 // files / API responses (Prisma uses stringified JSON columns for the
 // nested structures - these types are what's inside those columns).
 
-export type AspectRatio = "16:9" | "9:16" | "1:1";
+export type AspectRatio = "16:9" | "9:16" | "1:1" | "4:3";
+export type MediaType = "VIDEO" | "IMAGE";
 
 export type ProjectStatus = "DRAFT" | "GENERATING" | "READY" | "FAILED";
 
@@ -11,12 +12,11 @@ export type AgentState =
   | "IDLE"
   | "ANALYZING"
   | "PLANNING"
-  | "SCRIPT_GENERATION"
+  | "STORY_STRUCTURE"
   | "SCENE_PLANNING"
   | "PROMPT_GENERATION"
-  | "ASSET_GENERATION"
-  | "VOICE_GENERATION"
-  | "SUBTITLE_GENERATION"
+  | "AWAITING_UPLOADS"
+  | "TIMELINE_BUILDING"
   | "VIDEO_ASSEMBLY"
   | "VALIDATING"
   | "FIXING"
@@ -26,13 +26,21 @@ export type AgentState =
 
 export type SceneStatus = "PLANNED" | "GENERATING" | "READY" | "FAILED" | "REGENERATING" | "APPROVED";
 
-// StyleBible / CharacterBibleEntry are defined as zod schemas (the single
-// source of truth, also used to validate LLM output) in ./schemas.ts.
-export type { StyleBible, CharacterBibleEntry } from "./schemas.js";
+export type FitMode = "FIT" | "CROP" | "BLUR_BACKGROUND";
+export type TimelineItemKind = "IMAGE" | "VIDEO";
+export type MediaAssetType = "IMAGE" | "VIDEO" | "AUDIO";
+export type AudioTrackKind = "NARRATION" | "MUSIC";
+
+// StyleBible / CharacterBibleEntry / EnvironmentBibleEntry are defined as
+// zod schemas (the single source of truth, also used to validate LLM
+// output) in ./schemas.ts.
+export type { StyleBible, CharacterBibleEntry, EnvironmentBibleEntry } from "./schemas.js";
 
 export interface SceneData {
   sceneNumber: number;
   duration: number;
+  startTime: number;
+  endTime: number;
   narration: string;
   onScreenText: string;
   visualDescription: string;
@@ -40,6 +48,11 @@ export interface SceneData {
   videoPrompt: string;
   animationDirection: string;
   cameraDirection: string;
+  composition: string;
+  negativeInstructions: string;
+  continuityNotes: string;
+  characters: string[];
+  environmentKey: string;
   transition: string;
   soundEffects: string;
   status: SceneStatus;
@@ -51,6 +64,9 @@ export interface ProjectConfig {
   description: string;
   topic: string;
   duration: number;
+  mediaType: MediaType;
+  clipDurationSec: number;
+  imageDurationSec: number;
   aspectRatio: AspectRatio;
   resolution: string;
   fps: number;
@@ -58,6 +74,8 @@ export interface ProjectConfig {
   audience: string;
   style: string;
   videoType: string;
+  narrationRequired: boolean;
+  musicRequired: boolean;
   status: ProjectStatus;
   agentState: AgentState;
 }

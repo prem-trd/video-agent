@@ -3,18 +3,18 @@
 // simple enough at this size, and keeps the client fully decoupled from
 // server internals.
 
-export type AspectRatio = "16:9" | "9:16" | "1:1";
+export type AspectRatio = "16:9" | "9:16" | "1:1" | "4:3";
+export type MediaType = "VIDEO" | "IMAGE";
 export type ProjectStatus = "DRAFT" | "GENERATING" | "READY" | "FAILED";
 export type AgentState =
   | "IDLE"
   | "ANALYZING"
   | "PLANNING"
-  | "SCRIPT_GENERATION"
+  | "STORY_STRUCTURE"
   | "SCENE_PLANNING"
   | "PROMPT_GENERATION"
-  | "ASSET_GENERATION"
-  | "VOICE_GENERATION"
-  | "SUBTITLE_GENERATION"
+  | "AWAITING_UPLOADS"
+  | "TIMELINE_BUILDING"
   | "VIDEO_ASSEMBLY"
   | "VALIDATING"
   | "FIXING"
@@ -23,6 +23,10 @@ export type AgentState =
   | "CANCELLED";
 
 export type SceneStatus = "PLANNED" | "GENERATING" | "READY" | "FAILED" | "REGENERATING" | "APPROVED";
+export type FitMode = "FIT" | "CROP" | "BLUR_BACKGROUND";
+export type TimelineItemKind = "IMAGE" | "VIDEO";
+export type MediaAssetType = "IMAGE" | "VIDEO" | "AUDIO";
+export type AudioTrackKind = "NARRATION" | "MUSIC";
 
 export interface StyleBible {
   style: string;
@@ -35,20 +39,17 @@ export interface StyleBible {
   textStyle?: string;
 }
 
-export interface YoutubeMeta {
-  title: string;
-  description: string;
-  tags: string[];
-  hashtags: string[];
-  thumbnailPrompt: string;
-}
-
 export interface Project {
   id: string;
   title: string;
   description: string;
   topic: string;
   duration: number;
+  mediaType: MediaType;
+  clipDurationSec: number;
+  imageDurationSec: number;
+  narrationRequired: boolean;
+  musicRequired: boolean;
   aspectRatio: AspectRatio;
   resolution: string;
   fps: number;
@@ -60,7 +61,7 @@ export interface Project {
   agentState: AgentState;
   script: unknown;
   styleBible: StyleBible | null;
-  youtubeMeta: YoutubeMeta | null;
+  storyContext: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -70,6 +71,8 @@ export interface Scene {
   projectId: string;
   sceneNumber: number;
   duration: number;
+  startTime: number;
+  endTime: number;
   narration: string;
   onScreenText: string;
   visualDescription: string;
@@ -77,31 +80,132 @@ export interface Scene {
   videoPrompt: string;
   animationDirection: string;
   cameraDirection: string;
+  composition: string;
+  negativeInstructions: string;
+  continuityNotes: string;
+  characters: string[];
+  environmentKey: string;
   transition: string;
   soundEffects: string;
   status: SceneStatus;
-  activeAssetId: string | null;
   createdAt: string;
   updatedAt: string;
 }
 
-export type AssetType = "IMAGE" | "VIDEO" | "VOICE" | "MUSIC" | "SUBTITLE" | "THUMBNAIL";
-
-export interface Asset {
+export interface PromptVersion {
   id: string;
   projectId: string;
-  sceneId: string | null;
-  type: AssetType;
+  sceneId: string;
   version: number;
-  status: string;
-  provider: string;
-  isMock: boolean;
-  prompt: string;
-  filePath: string;
-  duration: number | null;
-  metadata: Record<string, unknown>;
+  visualDescription: string;
+  imagePrompt: string;
+  videoPrompt: string;
+  animationDirection: string;
+  cameraDirection: string;
+  composition: string;
+  negativeInstructions: string;
+  continuityNotes: string;
+  isActive: boolean;
   createdAt: string;
-  updatedAt: string;
+}
+
+export interface CharacterBibleEntry {
+  id: string;
+  characterKey: string;
+  name: string;
+  appearance: string;
+  age: string;
+  colors: string;
+  clothing: string;
+  personality: string;
+  visualStyle: string;
+  environment: string;
+}
+
+export interface EnvironmentBibleEntry {
+  id: string;
+  environmentKey: string;
+  name: string;
+  description: string;
+  lighting: string;
+  colors: string;
+  props: string;
+  timeOfDay: string;
+}
+
+export interface MediaAsset {
+  id: string;
+  projectId: string;
+  type: MediaAssetType;
+  originalFilename: string;
+  filePath: string;
+  width: number | null;
+  height: number | null;
+  durationSec: number | null;
+  aspectRatio: string;
+  sizeBytes: number;
+  status: string;
+  matchedSceneNumber: number | null;
+  createdAt: string;
+}
+
+export interface TimelineItem {
+  id: string;
+  projectId: string;
+  mediaAssetId: string;
+  sceneId: string | null;
+  sceneNumber: number | null;
+  kind: TimelineItemKind;
+  order: number;
+  displayDurationSec: number | null;
+  trimStartSec: number | null;
+  trimEndSec: number | null;
+  fitMode: FitMode;
+  transition: string;
+  startTime: number;
+  endTime: number;
+  active: boolean;
+  mediaAsset?: {
+    id: string;
+    type: MediaAssetType;
+    originalFilename: string;
+    filePath: string;
+    width: number | null;
+    height: number | null;
+    durationSec: number | null;
+    aspectRatio: string;
+  };
+}
+
+export interface AudioTrack {
+  id: string;
+  projectId: string;
+  kind: AudioTrackKind;
+  filePath: string;
+  originalFilename: string;
+  durationSec: number | null;
+  volume: number;
+  fadeInSec: number;
+  fadeOutSec: number;
+  active: boolean;
+  createdAt: string;
+}
+
+export interface Render {
+  id: string;
+  projectId: string;
+  filePath: string;
+  status: "PENDING" | "SUCCEEDED" | "FAILED";
+  durationSec: number;
+  resolution: string;
+  aspectRatio: string;
+  fps: number;
+  mediaItemCount: number;
+  sizeBytes: number;
+  hasAudio: boolean;
+  hasSubtitles: boolean;
+  validationIssues: string[];
+  createdAt: string;
 }
 
 export interface ChatMessage {
@@ -153,6 +257,11 @@ export interface AgentStatus {
   agentState: AgentState;
   logs: AgentLog[];
   tasks: AgentTask[];
+}
+
+export interface UploadResult {
+  uploaded: number;
+  results: { mediaAsset: MediaAsset; match: { sceneNumber: number; confidence: "high" | "low" } | null; autoAssigned: boolean }[];
 }
 
 export interface ApiErrorBody {

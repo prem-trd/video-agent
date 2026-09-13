@@ -154,4 +154,54 @@ describe("FFmpegService (real ffmpeg/ffprobe)", () => {
       code: "FFMPEG_ERROR",
     });
   });
+
+  it("imageToVideo converts a still image into a fixed-duration video at the target resolution, for every fit mode", async () => {
+    const image = path.join(dir, "upload.png");
+    // A non-16:9 source so FIT/CROP/BLUR_BACKGROUND genuinely differ from a plain scale.
+    await ffmpegService.generateColorImage(image, { width: 400, height: 400, color: "0x224466", title: "Upload" });
+
+    for (const fitMode of ["FIT", "CROP", "BLUR_BACKGROUND"] as const) {
+      const out = path.join(dir, `image-${fitMode}.mp4`);
+      await ffmpegService.imageToVideo(image, out, { width: 320, height: 180, fps: 24, durationSec: 2, fitMode });
+      const probe = await ffmpegService.probe(out);
+      expect(probe.hasVideo).toBe(true);
+      expect(probe.width).toBe(320);
+      expect(probe.height).toBe(180);
+      expect(probe.durationSec).toBeGreaterThan(1.5);
+    }
+  });
+
+  it("normalizeVideoClip resizes an uploaded clip to the target resolution/fps without audio", async () => {
+    const source = path.join(dir, "uploaded-clip.mp4");
+    await ffmpegService.generateTestVideo(source, { width: 640, height: 360, durationSec: 2, fps: 30, color: "0x336699", title: "Clip" });
+
+    const out = path.join(dir, "normalized-clip.mp4");
+    await ffmpegService.normalizeVideoClip(source, out, { width: 320, height: 180, fps: 24, fitMode: "CROP" });
+    const probe = await ffmpegService.probe(out);
+    expect(probe.hasVideo).toBe(true);
+    expect(probe.hasAudio).toBe(false);
+    expect(probe.width).toBe(320);
+    expect(probe.height).toBe(180);
+  });
+
+  it("normalizeVideoClip trims to the given start/end range", async () => {
+    const source = path.join(dir, "trim-source.mp4");
+    await ffmpegService.generateTestVideo(source, { width: 320, height: 180, durationSec: 4, fps: 24, color: "0x556677", title: "Trim" });
+
+    const out = path.join(dir, "trimmed.mp4");
+    await ffmpegService.normalizeVideoClip(source, out, { width: 320, height: 180, fps: 24, trimStartSec: 1, trimEndSec: 3 });
+    const probe = await ffmpegService.probe(out);
+    expect(probe.durationSec).toBeGreaterThan(1.5);
+    expect(probe.durationSec).toBeLessThan(2.5);
+  });
+
+  it("prepareMusicTrack loops a short music bed up to an exact target duration", async () => {
+    const music = path.join(dir, "music-bed.m4a");
+    await ffmpegService.generateToneAudio(music, { durationSec: 1 });
+    const out = path.join(dir, "music-prepared.m4a");
+    await ffmpegService.prepareMusicTrack(music, out, { durationSec: 3, volume: 0.3 });
+    const probe = await ffmpegService.probe(out);
+    expect(probe.hasAudio).toBe(true);
+    expect(probe.durationSec).toBeGreaterThan(2.5);
+  });
 });

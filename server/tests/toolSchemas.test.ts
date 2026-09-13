@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { updateSceneTool } from "../src/tools/scenes/updateScene.js";
-import { generateVisualPromptTool } from "../src/tools/scenes/generateVisualPrompt.js";
+import { regenerateScenePromptTool } from "../src/tools/scenes/regenerateScenePrompt.js";
 import { updateProjectTool } from "../src/tools/planning/updateProject.js";
 
 // Regression coverage for a real bug found during live testing: tool input
@@ -30,10 +30,10 @@ describe("tool input schemas reject unknown fields (.strict())", () => {
     expect(result.success).toBe(false);
   });
 
-  it("generate_visual_prompt rejects unknown fields", () => {
-    const result = generateVisualPromptTool.inputSchema.safeParse({
+  it("regenerate_scene_prompt rejects unknown fields", () => {
+    const result = regenerateScenePromptTool.inputSchema.safeParse({
       sceneNumber: 1,
-      visualDescription: "should go through generate_visual_prompt's own LLM call, not be passed in directly",
+      visualDescription: "should go through regenerate_scene_prompt's own LLM call, not be passed in directly",
     });
     expect(result.success).toBe(false);
   });

@@ -55,7 +55,7 @@ export const createThumbnailTool: Tool<z.infer<typeof InputSchema>> = {
     // a single fixed path here would silently corrupt older "versions":
     // the DB would still show v1/v2 as distinct rows, but both would point
     // at whatever the file was last overwritten with.
-    const version = await AssetService.nextVersion(ctx.projectId, undefined, "THUMBNAIL");
+    const version = await AssetService.nextVersion(ctx.projectId, "THUMBNAIL");
     const outputPath = ProjectStorage.absolutePath(ctx.projectId, `thumbnails/thumbnail-v${version}.png`);
 
     await ffmpegService.createThumbnail(sourceVideo, outputPath, { timestampSec, width, height });
@@ -64,8 +64,6 @@ export const createThumbnailTool: Tool<z.infer<typeof InputSchema>> = {
     const asset = await AssetService.record({
       projectId: ctx.projectId,
       type: "THUMBNAIL",
-      provider: "internal",
-      isMock: false,
       filePath: outputPath,
       generationHash,
       metadata: { timestampSec, sourceVideo },

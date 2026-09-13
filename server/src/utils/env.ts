@@ -11,16 +11,6 @@ const EnvSchema = z.object({
   OLLAMA_BASE_URL: z.string().default("https://ollama.com/v1"),
   OLLAMA_MODEL: z.string().default("gpt-oss:120b-cloud"),
 
-  VIDEO_PROVIDER: z.string().default("mock"),
-  IMAGE_PROVIDER: z.string().default("mock"),
-  TTS_PROVIDER: z.string().default("mock"),
-  MUSIC_PROVIDER: z.string().default("mock"),
-
-  IMAGE_PROVIDER_API_KEY: z.string().optional().default(""),
-  VIDEO_PROVIDER_API_KEY: z.string().optional().default(""),
-  TTS_PROVIDER_API_KEY: z.string().optional().default(""),
-  MUSIC_PROVIDER_API_KEY: z.string().optional().default(""),
-
   FFMPEG_PATH: z.string().default("ffmpeg"),
   FFPROBE_PATH: z.string().default("ffprobe"),
 

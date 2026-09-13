@@ -10,6 +10,8 @@ import { agentRouter } from "./routes/agent.js";
 import { scenesRouter } from "./routes/scenes.js";
 import { assetsRouter } from "./routes/assets.js";
 import { mediaRouter } from "./routes/media.js";
+import { uploadRouter } from "./routes/upload.js";
+import { timelineRouter } from "./routes/timeline.js";
 import { eventsRouter } from "./routes/events.js";
 import { AppError } from "./utils/errors.js";
 
@@ -27,9 +29,11 @@ app.use("/api/projects", projectsRouter);
 app.use("/api/projects/:id/chat", chatRouter);
 app.use("/api/projects/:id/scenes", scenesRouter);
 app.use("/api/projects/:id/assets", assetsRouter);
+app.use("/api/projects/:id/timeline", timelineRouter);
 app.use("/api/projects/:id/events", eventsRouter);
-app.use("/api/projects/:id", agentRouter); // /cancel, /status, /generate
-app.use("/api/projects/:id", mediaRouter); // /video, /thumbnail, /files/*
+app.use("/api/projects/:id", agentRouter); // /cancel, /status, /generate-prompts, /assemble, /renders/latest
+app.use("/api/projects/:id", uploadRouter); // /upload, /upload-audio, /upload-subtitles
+app.use("/api/projects/:id", mediaRouter); // /video, /thumbnail, /media, /files/*
 
 // Central error handler - every route error surfaces as
 // { code, message, retryable, details } (spec #44).

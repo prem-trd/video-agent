@@ -12,57 +12,75 @@ datasource db {
 }
 
 model Project {
-  id           String   @id @default(cuid())
-  title        String
-  description  String   @default("")
-  topic        String   @default("")
-  duration     Int      @default(60)
-  aspectRatio  String   @default("16:9")
-  resolution   String   @default("1920x1080")
-  fps          Int      @default(30)
-  language     String   @default("English")
-  audience     String   @default("General")
-  style        String   @default("3D Cartoon")
-  videoType    String   @default("Educational")
-  status       String   @default("DRAFT") // DRAFT | GENERATING | READY | FAILED
-  agentState   String   @default("IDLE")
-  storagePath  String
-  scriptJson   String   @default("null") // serialized Script
-  styleBible   String   @default("null") // serialized StyleBible
-  youtubeMeta  String   @default("null") // serialized YouTube metadata
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  id                String   @id @default(cuid())
+  title             String
+  description       String   @default("")
+  topic             String   @default("")
+  duration          Int      @default(60) // target duration, in seconds
+  mediaType         String   @default("VIDEO") // VIDEO | IMAGE
+  clipDurationSec   Float    @default(10) // per-clip duration, video mode
+  imageDurationSec  Float    @default(5) // per-image display duration, image mode
+  narrationRequired Boolean  @default(false)
+  musicRequired     Boolean  @default(false)
+  aspectRatio       String   @default("16:9") // 16:9 | 9:16 | 1:1 | 4:3
+  resolution        String   @default("1920x1080")
+  fps               Int      @default(30)
+  language          String   @default("English")
+  audience          String   @default("General")
+  style             String   @default("3D Cartoon")
+  videoType         String   @default("Educational")
+  status            String   @default("DRAFT") // DRAFT | GENERATING | READY | FAILED
+  agentState        String   @default("IDLE")
+  storagePath       String
+  scriptJson        String   @default("null") // serialized story structure
+  styleBible        String   @default("null") // serialized StyleBible
+  storyContext      String   @default("") // overall narrative arc / continuity notes
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
 
-  scenes      Scene[]
-  characters  Character[]
-  assets      Asset[]
-  tasks       AgentTask[]
-  logs        AgentLog[]
-  revisions   Revision[]
-  messages    ChatMessage[]
+  scenes        Scene[]
+  characters    Character[]
+  environments  Environment[]
+  promptVersions PromptVersion[]
+  mediaAssets   MediaAsset[]
+  timelineItems TimelineItem[]
+  audioTracks   AudioTrack[]
+  renders       Render[]
+  assets        Asset[]
+  tasks         AgentTask[]
+  logs          AgentLog[]
+  revisions     Revision[]
+  messages      ChatMessage[]
 }
 
 model Scene {
-  id                 String   @id @default(cuid())
-  projectId          String
-  project            Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  sceneNumber        Int
-  duration           Float    @default(5)
-  narration          String   @default("")
-  onScreenText       String   @default("")
-  visualDescription  String   @default("")
-  imagePrompt        String   @default("")
-  videoPrompt        String   @default("")
-  animationDirection String   @default("")
-  cameraDirection    String   @default("")
-  transition         String   @default("fade")
-  soundEffects       String   @default("")
-  status             String   @default("PLANNED") // PLANNED|GENERATING|READY|FAILED|REGENERATING|APPROVED
-  activeAssetId       String?
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
+  id                    String   @id @default(cuid())
+  projectId             String
+  project               Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  sceneNumber           Int
+  duration              Float    @default(5)
+  startTime             Float    @default(0)
+  endTime               Float    @default(0)
+  narration             String   @default("")
+  onScreenText          String   @default("")
+  visualDescription     String   @default("")
+  imagePrompt           String   @default("")
+  videoPrompt           String   @default("")
+  animationDirection    String   @default("")
+  cameraDirection       String   @default("")
+  composition           String   @default("") // framing/composition, mainly used for image prompts
+  negativeInstructions  String   @default("")
+  continuityNotes       String   @default("")
+  characters            String   @default("[]") // JSON array of characterKeys referenced by this scene
+  environmentKey        String   @default("") // reference into the Environment bible
+  transition            String   @default("fade")
+  soundEffects          String   @default("")
+  status                String   @default("PLANNED") // PLANNED|GENERATING|READY|FAILED|REGENERATING|APPROVED
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
 
-  assets Asset[]
+  promptVersions PromptVersion[]
+  timelineItems  TimelineItem[]
 
   @@unique([projectId, sceneNumber])
   @@index([projectId])
@@ -88,28 +106,157 @@ model Character {
   @@index([projectId])
 }
 
+/** The Environment Bible - mirrors Character so recurring settings stay visually consistent across scenes. */
+model Environment {
+  id             String   @id @default(cuid())
+  projectId      String
+  project        Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  environmentKey String   // stable id used in prompts, e.g. "red_barn"
+  name           String
+  description    String   @default("")
+  lighting       String   @default("")
+  colors         String   @default("")
+  props          String   @default("")
+  timeOfDay      String   @default("")
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([projectId, environmentKey])
+  @@index([projectId])
+}
+
+/** Historical snapshots of a scene's prompt fields, written before every overwrite (spec: "Scene 05 v1/v2/v3"). */
+model PromptVersion {
+  id                   String   @id @default(cuid())
+  projectId            String
+  project              Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  sceneId              String
+  scene                Scene    @relation(fields: [sceneId], references: [id], onDelete: Cascade)
+  version              Int
+  visualDescription    String   @default("")
+  imagePrompt          String   @default("")
+  videoPrompt          String   @default("")
+  animationDirection   String   @default("")
+  cameraDirection      String   @default("")
+  composition          String   @default("")
+  negativeInstructions String   @default("")
+  continuityNotes      String   @default("")
+  isActive             Boolean  @default(true)
+  createdAt            DateTime @default(now())
+
+  @@unique([sceneId, version])
+  @@index([projectId])
+  @@index([sceneId])
+}
+
+/** One row per uploaded (externally-generated) file - never something this app generated itself. */
+model MediaAsset {
+  id              String   @id @default(cuid())
+  projectId       String
+  project         Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  type            String   // IMAGE | VIDEO | AUDIO
+  originalFilename String
+  filePath        String
+  width           Int?
+  height          Int?
+  durationSec     Float?
+  aspectRatio     String   @default("")
+  sizeBytes       Int      @default(0)
+  status          String   @default("UPLOADED") // UPLOADED|PROBED|INVALID
+  probeMetadata   String   @default("{}") // JSON blob: codec, fps, format, etc.
+  matchedSceneNumber Int?
+  createdAt       DateTime @default(now())
+
+  timelineItems TimelineItem[]
+
+  @@index([projectId])
+}
+
+/** The ordered assembly sequence FFmpeg concatenates into the final video. */
+model TimelineItem {
+  id                 String   @id @default(cuid())
+  projectId          String
+  project            Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  mediaAssetId       String
+  mediaAsset         MediaAsset @relation(fields: [mediaAssetId], references: [id], onDelete: Cascade)
+  sceneId            String?
+  scene              Scene?   @relation(fields: [sceneId], references: [id], onDelete: SetNull)
+  kind               String   // IMAGE | VIDEO
+  order              Int      @default(0)
+  displayDurationSec Float?   // images: how long to show; videos: null = use probed duration
+  trimStartSec       Float?
+  trimEndSec         Float?
+  fitMode            String   @default("FIT") // FIT | CROP | BLUR_BACKGROUND - never stretch
+  transition         String   @default("cut")
+  startTime          Float    @default(0)
+  endTime            Float    @default(0)
+  active             Boolean  @default(true) // soft delete - keeps history/undo possible
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@index([projectId])
+  @@index([sceneId])
+}
+
+/** Uploaded narration/music - muxed in during assembly. No TTS/music generation API involved. */
+model AudioTrack {
+  id          String   @id @default(cuid())
+  projectId   String
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  kind        String   // NARRATION | MUSIC
+  filePath    String
+  originalFilename String @default("")
+  durationSec Float?
+  volume      Float    @default(1)
+  fadeInSec   Float    @default(0)
+  fadeOutSec  Float    @default(0)
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  @@index([projectId])
+}
+
+/** Internally-produced artifacts only (never AI-generated media): subtitles and thumbnails. */
 model Asset {
   id            String   @id @default(cuid())
   projectId     String
   project       Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  sceneId       String?
-  scene         Scene?   @relation(fields: [sceneId], references: [id], onDelete: SetNull)
-  type          String   // IMAGE | VIDEO | VOICE | MUSIC | SUBTITLE | THUMBNAIL
+  type          String   // SUBTITLE | THUMBNAIL
   version       Int      @default(1)
   status        String   @default("QUEUED") // QUEUED|PROCESSING|COMPLETED|FAILED
-  provider      String
-  isMock        Boolean  @default(true)
+  provider      String   @default("internal")
+  isMock        Boolean  @default(false)
   prompt        String   @default("")
   filePath      String   @default("")
   duration      Float?
   generationHash String  @default("")
-  metadata      String   @default("{}") // JSON blob: resolution, voice, language, etc.
+  metadata      String   @default("{}")
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
   @@index([projectId])
-  @@index([sceneId])
   @@index([generationHash])
+}
+
+/** One row per assembly run (spec: show duration/resolution/aspect ratio/item count/file size/validation). */
+model Render {
+  id                String   @id @default(cuid())
+  projectId         String
+  project           Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  filePath          String
+  status            String   @default("PENDING") // PENDING|SUCCEEDED|FAILED
+  durationSec       Float    @default(0)
+  resolution        String   @default("")
+  aspectRatio       String   @default("")
+  fps               Float    @default(0)
+  mediaItemCount    Int      @default(0)
+  sizeBytes         Int      @default(0)
+  hasAudio          Boolean  @default(false)
+  hasSubtitles      Boolean  @default(false)
+  validationIssues  String   @default("[]") // JSON array of strings
+  createdAt         DateTime @default(now())
+
+  @@index([projectId])
 }
 
 model AgentTask {
@@ -166,16 +313,4 @@ model ChatMessage {
   createdAt  DateTime @default(now())
 
   @@index([projectId])
-}
-
-model ProviderConfig {
-  id         String   @id @default(cuid())
-  kind       String   // IMAGE|VIDEO|TTS|MUSIC
-  name       String
-  isMock     Boolean  @default(true)
-  isActive   Boolean  @default(true)
-  config     String   @default("{}")
-  createdAt  DateTime @default(now())
-
-  @@unique([kind, name])
 }

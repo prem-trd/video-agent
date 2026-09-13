@@ -1,10 +1,11 @@
 import { Router } from "express";
 import { z } from "zod";
 import { SceneService, serializeScene } from "../services/SceneService.js";
-import { AssetService, serializeAsset, type AssetType } from "../services/AssetService.js";
+import { PromptVersionService, serializePromptVersion } from "../services/PromptVersionService.js";
 import { toolRegistry } from "../tools/index.js";
 import { AppError } from "../utils/errors.js";
 import { childLogger } from "../utils/logger.js";
+import { looseOptional } from "../utils/zodHelpers.js";
 
 const log = childLogger({ module: "scenes-route" });
 export const scenesRouter = Router({ mergeParams: true });
@@ -36,6 +37,11 @@ const PatchSceneSchema = z
     videoPrompt: z.string().optional(),
     animationDirection: z.string().optional(),
     cameraDirection: z.string().optional(),
+    composition: z.string().optional(),
+    negativeInstructions: z.string().optional(),
+    continuityNotes: z.string().optional(),
+    characters: z.array(z.string()).optional(),
+    environmentKey: z.string().optional(),
     transition: z.string().optional(),
     soundEffects: z.string().optional(),
     status: z.enum(["PLANNED", "GENERATING", "READY", "FAILED", "REGENERATING", "APPROVED"]).optional(),
@@ -54,51 +60,80 @@ scenesRouter.patch("/:sceneId", async (req, res) => {
   }
 });
 
-const RegenerateSchema = z.object({ type: z.enum(["video", "voice", "image"]).default("video") }).strict();
+/** Direct UI "+ Add scene(s)" action - runs the same add_scenes tool logic. */
+const AddScenesBodySchema = z.object({ count: looseOptional(z.number().int().positive()), guidance: z.string().optional() }).strict();
+scenesRouter.post("/", async (req, res) => {
+  try {
+    const { id: projectId } = req.params as { id: string };
+    const body = AddScenesBodySchema.parse(req.body ?? {});
+    const tool = toolRegistry.get("add_scenes");
+    const result = await tool.execute({ count: body.count ?? 1, guidance: body.guidance }, { projectId });
+    res.json({ scenes: await SceneService.list(projectId).then((s) => s.map(serializeScene)), result });
+  } catch (err) {
+    handleError(err, res);
+  }
+});
+
+/** Direct UI "delete scene" action. */
+scenesRouter.delete("/:sceneId", async (req, res) => {
+  try {
+    const { id: projectId, sceneId } = req.params as { id: string; sceneId: string };
+    await SceneService.get(projectId, sceneId);
+    const tool = toolRegistry.get("remove_scene");
+    await tool.execute({ sceneId }, { projectId });
+    res.status(204).send();
+  } catch (err) {
+    handleError(err, res);
+  }
+});
+
+/** Direct UI reorder action ("move before/after"). */
+const MoveSceneSchema = z.object({ beforeSceneNumber: looseOptional(z.number().int().positive()), afterSceneNumber: looseOptional(z.number().int().positive()) }).strict();
+scenesRouter.post("/:sceneId/move", async (req, res) => {
+  try {
+    const { id: projectId, sceneId } = req.params as { id: string; sceneId: string };
+    const body = MoveSceneSchema.parse(req.body);
+    await SceneService.move(projectId, sceneId, body);
+    res.json(await SceneService.get(projectId, sceneId).then(serializeScene));
+  } catch (err) {
+    handleError(err, res);
+  }
+});
 
 /**
- * Regenerates one scene's media directly (spec #16 "regenerate scene",
- * #33 API). Runs the same underlying tool logic as generate_video /
- * generate_voice / generate_image so caching/versioning behave identically
- * whether triggered from chat or from a UI button.
+ * Regenerates one scene's prompt directly (UI "regenerate" button). Runs
+ * the same regenerate_scene_prompt tool logic used from chat.
  */
 scenesRouter.post("/:sceneId/regenerate", async (req, res) => {
   try {
     const { id: projectId, sceneId } = req.params as { id: string; sceneId: string };
-    const { type } = RegenerateSchema.parse(req.body ?? {});
-    const scene = await SceneService.get(projectId, sceneId);
-
-    await SceneService.update(projectId, sceneId, { status: "REGENERATING" });
-
-    const toolName = type === "video" ? "generate_video" : type === "voice" ? "generate_voice" : "generate_image";
-    const tool = toolRegistry.get(toolName);
-    const result = await tool.execute({ sceneId: scene.id, force: true }, { projectId });
-
-    res.json({ scene: serializeScene(await SceneService.get(projectId, sceneId)), result });
+    await SceneService.get(projectId, sceneId);
+    const tool = toolRegistry.get("regenerate_scene_prompt");
+    const result = await tool.execute({ sceneId }, { projectId });
+    res.json(result);
   } catch (err) {
     handleError(err, res);
   }
 });
 
-/** Lists every generated version of one scene's asset of a given type (spec #28). */
-scenesRouter.get("/:sceneId/versions", async (req, res) => {
+/** Lists every historical prompt version for a scene. */
+scenesRouter.get("/:sceneId/prompt-versions", async (req, res) => {
   try {
     const { id: projectId, sceneId } = req.params as { id: string; sceneId: string };
-    const type = (req.query.type as AssetType | undefined) ?? "VIDEO";
-    await SceneService.get(projectId, sceneId); // 404s if the scene doesn't belong to this project
-    const versions = await AssetService.listForScene(projectId, sceneId, type);
-    res.json(versions.map(serializeAsset));
+    await SceneService.get(projectId, sceneId); // 404s if missing/wrong project
+    const versions = await PromptVersionService.listForScene(projectId, sceneId);
+    res.json(versions.map(serializePromptVersion));
   } catch (err) {
     handleError(err, res);
   }
 });
 
-/** Switches which version of a scene's asset is active (spec #28 "Use version 2"). */
-scenesRouter.post("/:sceneId/versions/:assetId/activate", async (req, res) => {
+/** Restores a scene's prompt fields from a chosen historical version. */
+scenesRouter.post("/:sceneId/prompt-versions/:versionId/activate", async (req, res) => {
   try {
-    const { id: projectId, sceneId, assetId } = req.params as { id: string; sceneId: string; assetId: string };
-    const asset = await AssetService.setActiveVersion(projectId, sceneId, assetId);
-    res.json({ scene: serializeScene(await SceneService.get(projectId, sceneId)), activatedAsset: serializeAsset(asset) });
+    const { id: projectId, sceneId, versionId } = req.params as { id: string; sceneId: string; versionId: string };
+    const scene = await PromptVersionService.activate(projectId, sceneId, versionId);
+    res.json(serializeScene(scene));
   } catch (err) {
     handleError(err, res);
   }
