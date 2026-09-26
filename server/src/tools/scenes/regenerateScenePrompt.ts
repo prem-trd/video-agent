@@ -5,6 +5,7 @@ import { ScenePromptSchema } from "../../types/schemas.js";
 import { SceneService, serializeScene } from "../../services/SceneService.js";
 import { ProjectService } from "../../services/ProjectService.js";
 import { buildCreativeContext } from "../../agent/PromptContext.js";
+import { VIDEO_PROMPT_GUIDE } from "./videoPromptGuide.js";
 import { sceneRefFields, requireSceneRef, SCENE_REF_ERROR } from "../sceneRef.js";
 
 const InputSchema = z
@@ -46,11 +47,12 @@ export const regenerateScenePromptTool: Tool<z.infer<typeof InputSchema>> = {
             (isImage
               ? "You are a visual director regenerating an IMAGE prompt for one scene."
               : "You are a visual director regenerating a VIDEO CLIP prompt for one scene.") +
-            " Produce visualDescription, imagePrompt, videoPrompt (empty if mediaType is IMAGE), animationDirection, cameraDirection, composition, negativeInstructions, continuityNotes, characters, environmentKey, transition, soundEffects - incorporating the Style/Character/Environment Bibles verbatim where relevant. Respond with ONLY a JSON object matching the schema.",
+            " Produce visualDescription, imagePrompt, videoPrompt (empty if mediaType is IMAGE), animationDirection, cameraDirection, composition, negativeInstructions, continuityNotes, characters, environmentKey, transition, soundEffects - incorporating the Style/Character/Environment Bibles verbatim where relevant. Respond with ONLY a JSON object matching the schema." +
+            (isImage ? "" : `\n\n${VIDEO_PROMPT_GUIDE}`),
         },
         {
           role: "user",
-          content: `${context}\n\nScene #${scene.sceneNumber} (${scene.duration}s) beat: "${scene.visualDescription}"\nCurrent imagePrompt: "${scene.imagePrompt || "(none yet)"}"\nCurrent videoPrompt: "${scene.videoPrompt || "(none yet)"}"${input.guidance ? `\n\nUser guidance: ${input.guidance}` : ""}`,
+          content: `${context}\n\nScene #${scene.sceneNumber} (${scene.duration}s) beat: "${scene.visualDescription}"\nNarration (speak verbatim in the videoPrompt): "${scene.narration || "(none)"}"\nCurrent imagePrompt: "${scene.imagePrompt || "(none yet)"}"\nCurrent videoPrompt: "${scene.videoPrompt || "(none yet)"}"${input.guidance ? `\n\nUser guidance: ${input.guidance}` : ""}`,
         },
       ],
       OutputSchema

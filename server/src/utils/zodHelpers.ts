@@ -21,3 +21,12 @@ export function looseOptional<T extends z.ZodTypeAny>(schema: T) {
 export function caseInsensitiveEnum<U extends string, T extends readonly [U, ...U[]]>(values: T) {
   return z.preprocess((val) => (typeof val === "string" ? val.toUpperCase() : val), z.enum(values));
 }
+
+/**
+ * A string field that also accepts an array of strings (joined with ", ") -
+ * observed with gpt-oss:120b returning list-like fields such as soundEffects
+ * as a JSON array instead of the requested string.
+ */
+export function stringOrList() {
+  return z.preprocess((val) => (Array.isArray(val) ? val.join(", ") : val), z.string().default(""));
+}

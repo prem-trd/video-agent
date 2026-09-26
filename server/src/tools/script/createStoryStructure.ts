@@ -8,6 +8,7 @@ import { CharacterService } from "../../services/CharacterService.js";
 import { EnvironmentService } from "../../services/EnvironmentService.js";
 import { buildCreativeContext } from "../../agent/PromptContext.js";
 import { computeSceneTimings } from "../../utils/sceneMath.js";
+import { maxNarrationWords } from "../scenes/videoPromptGuide.js";
 
 const InputSchema = z.object({}).strict();
 
@@ -51,6 +52,10 @@ export const createStoryStructureTool: Tool<z.infer<typeof InputSchema>> = {
               "You are a story editor breaking a topic into a numbered sequence of scenes for an AI image/video PROMPT generator (prompts only - media is generated externally). " +
               `Write EXACTLY these scenes: ${batch.map((t) => `#${t.sceneNumber}`).join(", ")} (sceneNumber must match exactly). ` +
               "For each: a short `title`, a `summary` of what happens (visual, not spoken), and `narration` text ONLY if narrationRequired is true (otherwise leave it empty). " +
+              `Narration is spoken inside each ${perSceneDuration}s clip by the video generator, so keep each scene's narration to AT MOST ${maxNarrationWords(perSceneDuration)} words - short, simple, energetic sentences, no emojis. ` +
+              (project.mediaType === "VIDEO" && project.narrationRequired
+                ? "Unless the topic clearly suits a voice-over only, include ONE recurring on-screen presenter character (a friendly host who speaks the narration) in `characters`, with a very detailed appearance (age, height, skin, hair, eyes, exact clothing and shoes). "
+                : "") +
               "If the topic naturally has more items than scenes (e.g. the alphabet, numbers 1-20), group multiple items into one scene rather than skipping ahead of the assigned scene numbers. " +
               "List any NEW recurring characters in `characters` and NEW recurring settings/environments in `environments` this batch introduces (skip ones already listed in the Character/Environment Bible below). " +
               "Every character needs a concrete, non-empty `appearance` (species/type, colors, clothing/accessories) - this becomes the Character Bible entry future prompts reuse verbatim. Every environment needs a concrete `description`. " +

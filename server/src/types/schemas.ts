@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { stringOrList } from "../utils/zodHelpers.js";
 
 // Zod is the single source of truth for these shapes: it validates LLM
 // structured output (chatJSON) AND tool input, and the TS types used
@@ -93,7 +94,7 @@ export const ScenePromptSchema = z.object({
   characters: z.array(z.string()).default([]).describe("characterKeys from the Character Bible appearing in this scene."),
   environmentKey: z.string().default("").describe("environmentKey from the Environment Bible this scene is set in, if any."),
   transition: z.string().default("fade"),
-  soundEffects: z.string().default(""),
+  soundEffects: stringOrList(),
 });
 export type ScenePrompt = z.infer<typeof ScenePromptSchema>;
 

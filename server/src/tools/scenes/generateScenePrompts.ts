@@ -7,6 +7,7 @@ import { ProjectService } from "../../services/ProjectService.js";
 import { buildCreativeContext } from "../../agent/PromptContext.js";
 import { AppError } from "../../utils/errors.js";
 import { looseOptional } from "../../utils/zodHelpers.js";
+import { VIDEO_PROMPT_GUIDE } from "./videoPromptGuide.js";
 
 const InputSchema = z
   .object({
@@ -68,10 +69,11 @@ export const generateScenePromptsTool: Tool<z.infer<typeof InputSchema>> = {
                 "Keep character/environment appearance IDENTICAL across scenes by reusing Bible descriptions verbatim. Respond with ONLY a JSON object matching the schema."
               : "You are a visual director writing VIDEO CLIP prompts for scenes that will be generated externally by an AI video tool and uploaded back into this app. " +
                 "For EVERY scene listed, produce: visualDescription, imagePrompt (a reference-frame prompt including Style Bible + Character/Environment Bible descriptions verbatim), " +
-                "videoPrompt (a self-contained motion/animation prompt for an AI video generator, sized for this scene's exact clip duration), animationDirection, cameraDirection, " +
+                "videoPrompt (a fully self-contained prompt for an AI video generator WITH native audio - visuals, action, the scene's narration spoken verbatim, sound effects and music, sized for this scene's exact clip duration), animationDirection, cameraDirection, " +
                 "composition, negativeInstructions, continuityNotes (what must visually match the previous/next scene - camera continuation, character position, lighting - so consecutive externally-generated clips cut together smoothly), " +
                 "characters (characterKeys appearing), environmentKey (if any), transition, soundEffects. " +
-                "Keep character/environment appearance IDENTICAL across scenes by reusing Bible descriptions verbatim. Respond with ONLY a JSON object matching the schema.",
+                "Keep character/environment appearance IDENTICAL across scenes by reusing Bible descriptions verbatim. Respond with ONLY a JSON object matching the schema.\n\n" +
+                VIDEO_PROMPT_GUIDE,
           },
           { role: "user", content: `${context}\n\nScenes:\n${sceneList}` },
         ],
