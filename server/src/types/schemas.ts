@@ -21,7 +21,20 @@ export const StyleBibleSchema = z.object({
 });
 export type StyleBible = z.infer<typeof StyleBibleSchema>;
 
-export const CharacterBibleEntrySchema = z.object({
+// The model sometimes omits the snake_case key or writes it in another
+// case/format - derive it from the name so one sloppy entry doesn't fail
+// the whole story-structure batch.
+function withDerivedKey(keyField: string) {
+  return (val: unknown) => {
+    if (!val || typeof val !== "object") return val;
+    const entry = val as Record<string, unknown>;
+    const source = typeof entry[keyField] === "string" && entry[keyField] ? String(entry[keyField]) : String(entry.name ?? "");
+    const key = source.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+    return key ? { ...entry, [keyField]: key } : entry;
+  };
+}
+
+export const CharacterBibleEntrySchema = z.preprocess(withDerivedKey("characterKey"), z.object({
   characterKey: z
     .string()
     .regex(/^[a-z0-9_]+$/, "characterKey must be lowercase snake_case, e.g. alpaca_01")
@@ -34,10 +47,10 @@ export const CharacterBibleEntrySchema = z.object({
   personality: z.string().default(""),
   visualStyle: z.string().default(""),
   environment: z.string().default(""),
-});
+}));
 export type CharacterBibleEntry = z.infer<typeof CharacterBibleEntrySchema>;
 
-export const EnvironmentBibleEntrySchema = z.object({
+export const EnvironmentBibleEntrySchema = z.preprocess(withDerivedKey("environmentKey"), z.object({
   environmentKey: z
     .string()
     .regex(/^[a-z0-9_]+$/, "environmentKey must be lowercase snake_case, e.g. red_barn")
@@ -48,7 +61,7 @@ export const EnvironmentBibleEntrySchema = z.object({
   colors: z.string().default(""),
   props: z.string().default(""),
   timeOfDay: z.string().default(""),
-});
+}));
 export type EnvironmentBibleEntry = z.infer<typeof EnvironmentBibleEntrySchema>;
 
 // A scene's duration/startTime/endTime are computed deterministically from

@@ -36,8 +36,8 @@ const ASPECT_PRESETS: { label: string; value: AspectRatio; hint: string }[] = [
 const DEFAULT_PROMPT =
   "Create an educational kids video about body parts: Head, Eyes, Nose, Mouth, Ears, Hands, Legs, Feet. " +
   "For preschool kids aged 2-5. " +
-  "Narration required, spoken by a cheerful adult woman teacher with curly brown hair, a bright yellow t-shirt and blue overalls, " +
-  "together with a friendly white bunny mascot with a blue bow tie. The teacher points to each part on herself. " +
+  "Narration required, spoken by a cheerful grown-up woman teacher with curly brown hair, a bright yellow t-shirt and blue overalls, " +
+  "who points to each part on herself. A friendly white bunny mascot with a blue bow tie appears only in the intro and goodbye. " +
   "3D Cartoon Pixar style, bright classroom. " +
   "10-second clips, 16:9. " +
   "One body part per scene, with an intro scene and a goodbye scene at the end.";
