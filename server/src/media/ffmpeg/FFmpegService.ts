@@ -40,6 +40,17 @@ function escapeDrawtext(text: string): string {
   return normalized.replace(/\\/g, "\\\\").replace(/:/g, "\\:").replace(/'/g, "\u2019").replace(/%/g, "\\%");
 }
 
+/** `adelay` prefix (with trailing comma) to start an audio stream later, or "" for no delay. */
+function delayFilter(delaySec: number): string {
+  return delaySec > 0 ? `adelay=${Math.round(delaySec * 1000)}:all=1,` : "";
+}
+
+/** "#RRGGBB" (as stored/entered in the UI) -> ffmpeg's "0xRRGGBB"; anything else falls back to white. */
+function toFfmpegColor(color?: string): string {
+  const m = /^#?([0-9a-fA-F]{6})$/.exec(color ?? "");
+  return m ? `0x${m[1]}` : "white";
+}
+
 const MAX_BUFFER = 1024 * 1024 * 64; // 64MB of stdout/stderr - ffmpeg logs can be chatty
 
 /**
@@ -330,6 +341,327 @@ export class FFmpegService {
   }
 
   // ---------------------------------------------------------------------
+  // Branding (opening / end screens)
+  // ---------------------------------------------------------------------
+
+  /**
+   * Renders the channel's opening or end screen as a normal video segment
+   * (with audio, so it joins like any clip), matching the channel's
+   * existing videos:
+   *
+   * OPENING  per-video background; `openingText` ("Welcome to") types in
+   *          letter by letter, holds, fades; the logo pops in with an
+   *          overshoot and then pulses on the beat; SUBSCRIBE (top-left),
+   *          share (top-right) and like (bottom-right) buttons pulse gently;
+   *          opening music underneath, faded out at the end.
+   * OUTRO    white (or the video's) background; the wide logo is revealed
+   *          with a left-to-right wipe; like, share and SUBSCRIBE pop in one
+   *          after another (SUBSCRIBE keeps pulsing); the end-screen voice
+   *          plays over a soft bed of the opening music.
+   *
+   * Timings mirror the reference video (logo in at ~1.85s, wipe 0.3-1.3s,
+   * share at 2.3s, subscribe at 2.8s) and are scaled down if a card is
+   * configured shorter. Text goes through textfile= so nothing in it can
+   * break the filtergraph.
+   */
+  async renderBrandCard(
+    outputPath: string,
+    opts: {
+      kind: "INTRO" | "OUTRO";
+      width: number;
+      height: number;
+      fps: number;
+      durationSec: number;
+      /** Background image; omitted = plain white. */
+      backgroundPath?: string;
+      blurBackground?: boolean;
+      logoPath?: string;
+      openingText?: string;
+      title?: string;
+      fontPath?: string;
+      textColor?: string;
+      /** Pre-rendered button images (see BrandingService.buttonAssets). */
+      buttons?: { subscribe: string; like: string; share: string };
+      musicPath?: string;
+      musicVolume?: number;
+      voicePath?: string;
+    }
+  ): Promise<void> {
+    const { width: W, height: H, fps, durationSec: D } = opts;
+    const isIntro = opts.kind === "INTRO";
+    const textDir = await this.tempDir("brand-text-");
+    try {
+      const inputs: string[] = [];
+      let next = 0;
+      const addImage = (file: string) => {
+        inputs.push("-loop", "1", "-framerate", String(fps), "-t", String(D), "-i", file);
+        return next++;
+      };
+      const bgIndex = opts.backgroundPath
+        ? addImage(opts.backgroundPath)
+        : (inputs.push("-f", "lavfi", "-i", `color=c=white:s=${W}x${H}:r=${fps}:d=${D}`), next++);
+      const logoIndex = opts.logoPath ? addImage(opts.logoPath) : -1;
+      const btn = opts.buttons ? { subscribe: addImage(opts.buttons.subscribe), like: addImage(opts.buttons.like), share: addImage(opts.buttons.share) } : null;
+      const musicIndex = opts.musicPath ? (inputs.push("-stream_loop", "-1", "-i", opts.musicPath), next++) : -1;
+      const voiceIndex = opts.voicePath ? (inputs.push("-i", opts.voicePath), next++) : -1;
+
+      const filters: string[] = [];
+      filters.push(
+        `[${bgIndex}:v]scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},${opts.blurBackground ? "gblur=sigma=24," : ""}setsar=1,fps=${fps},format=yuv420p[bg]`
+      );
+      let current = "bg";
+      const overlay = (input: string, x: string, y: string, enable?: string) => {
+        const out = `o${filters.length}`;
+        filters.push(`[${current}][${input}]overlay=x='${x}':y='${y}':eval=frame:shortest=1${enable ? `:enable='${enable}'` : ""}[${out}]`);
+        current = out;
+      };
+      // Per-frame scale: `factor` is an ffmpeg expression in t (1 = base size).
+      const scaled = (index: number, baseH: number, factor: string) => {
+        const out = `s${filters.length}`;
+        filters.push(`[${index}:v]format=rgba,scale=w=-2:h='max(2,trunc(${baseH}*(${factor})/2)*2)':eval=frame[${out}]`);
+        return out;
+      };
+      // Pop-in with overshoot at t0, then optional pulse (amplitude a, period p seconds).
+      const pop = (t0: number, a = 0, p = 1) =>
+        `if(lt(t,${t0}),0.01,if(lt(t,${t0 + 0.25}),1.18*(t-${t0})/0.25,if(lt(t,${t0 + 0.45}),1.18-0.18*(t-${t0 + 0.25})/0.2,1+${a}*sin(2*PI*(t-${t0 + 0.45})/${p}))))`;
+      const k = Math.min(1, D / 6); // compress the reference timings for short cards
+
+      const color = toFfmpegColor(opts.textColor);
+      const font = opts.fontPath ? `fontfile='${escapeFilterPath(opts.fontPath)}'` : `fontfile='/System/Library/Fonts/Supplemental/Georgia Bold.ttf'`;
+
+      if (isIntro) {
+        // "Welcome to": revealed left-to-right like typing (0 -> 0.9s sweep), then wiped
+        // away left-to-right (1.4 -> 1.9s), on a transparent strip so it stays exactly
+        // centred (drawtext's own text_w centring) whatever the text and font.
+        const text = (opts.openingText ?? "").trim();
+        if (text) {
+          const file = path.join(textDir, "opening.txt");
+          await fs.writeFile(file, text, "utf-8");
+          const size = Math.round(H * 0.085);
+          const stripH = Math.round(size * 2);
+          const edge = Math.round(W * 0.06); // soft edge of the sweep, px
+          const inEnd = 0.9 * k;
+          const outStart = 1.4 * k;
+          const outDur = 0.5 * k;
+          const sweepIn = `clip((W*T/${inEnd.toFixed(3)}-X)/${edge}+1\,0\,1)`;
+          const sweepOut = `(1-clip((W*(T-${outStart.toFixed(3)})/${outDur.toFixed(3)}-X)/${edge}+1\,0\,1))`;
+          filters.push(
+            `color=c=black@0:s=${W}x${stripH}:r=${fps}:d=${D},format=rgba,` +
+              `drawtext=${font}:textfile='${escapeFilterPath(file)}':expansion=none:fontsize=${size}:fontcolor=${color}:shadowcolor=black@0.35:shadowx=3:shadowy=3:x=(w-text_w)/2:y=(h-text_h)/2,` +
+              `geq=r='r(X,Y)':g='g(X,Y)':b='b(X,Y)':a='alpha(X,Y)*${sweepIn}*${sweepOut}'[openingText]`
+          );
+          overlay("openingText", "0", `${Math.round(H * 0.44 - stripH / 2)}`, `lt(t,${(outStart + outDur + 0.05).toFixed(3)})`);
+        }
+
+        const logoAt = text ? 1.85 * k : 0.2;
+        if (logoIndex >= 0) {
+          const logo = scaled(logoIndex, Math.round(H * 0.62), pop(logoAt, 0.045, 1.0));
+          overlay(logo, "(W-w)/2", `H*0.44-h/2`);
+        }
+        if (opts.title) {
+          const file = path.join(textDir, "title.txt");
+          await fs.writeFile(file, opts.title, "utf-8");
+          const titleSize = Math.round(Math.min(H * 0.05, (W * 0.9) / Math.max(1, opts.title.length * 0.55)));
+          filters.push(
+            `[${current}]drawtext=${font}:textfile='${escapeFilterPath(file)}':expansion=none:fontsize=${titleSize}:fontcolor=${color}:borderw=2:bordercolor=black@0.45:x=(w-text_w)/2:y=${Math.round(H * 0.8)}:alpha='if(lt(t,${logoAt + 0.5}),0,min(1,(t-${logoAt + 0.5})/0.5))'[titled]`
+          );
+          current = "titled";
+        }
+        if (btn) {
+          const sub = scaled(btn.subscribe, Math.round(H * 0.075), `1+0.05*sin(2*PI*t/1.0)`);
+          overlay(sub, `${Math.round(W * 0.025)}`, `${Math.round(H * 0.035)}`);
+          const share = scaled(btn.share, Math.round(H * 0.075), `1+0.05*sin(2*PI*(t+0.5)/1.0)`);
+          overlay(share, `W-w-${Math.round(W * 0.025)}`, `${Math.round(H * 0.035)}`);
+          const like = scaled(btn.like, Math.round(H * 0.09), `1+0.05*sin(2*PI*(t+0.25)/1.0)`);
+          overlay(like, `W-w-${Math.round(W * 0.025)}`, `H-h-${Math.round(H * 0.045)}`);
+        }
+      } else {
+        // Wide logo revealed by a left-to-right wipe (0.3s -> 1.3s): xfade between the
+        // background and background+logo, so it works on any background, not just white.
+        if (logoIndex >= 0) {
+          const wipeAt = 0.3 * k;
+          const wipeDur = 1.0 * k;
+          filters.push(`[${current}]split=2[plainA][plainB]`);
+          filters.push(`[${logoIndex}:v]format=rgba,scale=${Math.round(W * 0.66)}:-2[wlogo]`);
+          filters.push(`[plainB][wlogo]overlay=x=(W-w)/2:y=H*0.42-h/2:shortest=1[withlogo]`);
+          filters.push(`[plainA]trim=0:${(wipeAt + wipeDur).toFixed(3)},setpts=PTS-STARTPTS[wipeFrom]`);
+          filters.push(`[withlogo]trim=0:${(D - wipeAt).toFixed(3)},setpts=PTS-STARTPTS[wipeTo]`);
+          filters.push(`[wipeFrom][wipeTo]xfade=transition=wiperight:duration=${wipeDur.toFixed(3)}:offset=${wipeAt.toFixed(3)},format=yuv420p[revealed]`);
+          current = "revealed";
+        }
+        if (btn) {
+          const like = scaled(btn.like, Math.round(H * 0.1), pop(0.3 * k));
+          overlay(like, `${Math.round(W * 0.035)}`, `H-h-${Math.round(H * 0.05)}`);
+          const share = scaled(btn.share, Math.round(H * 0.1), pop(2.3 * k));
+          overlay(share, `W-w-${Math.round(W * 0.035)}`, `H-h-${Math.round(H * 0.05)}`);
+          const sub = scaled(btn.subscribe, Math.round(H * 0.1), pop(2.8 * k, 0.05, 1.0));
+          overlay(sub, "(W-w)/2", `H*0.8-h/2`);
+        }
+      }
+      filters.push(`[${current}]format=yuv420p[v]`);
+
+      // ---- audio ----
+      const volume = Math.max(0, Math.min(1, opts.musicVolume ?? 0.5));
+      const fadeOut = Math.min(0.8, D / 4);
+      const audioParts: string[] = [];
+      if (musicIndex >= 0) {
+        // Opening: music at `volume`; end screen: a soft bed (~30% of it) under the voice.
+        const level = isIntro ? volume : volume * 0.3;
+        filters.push(
+          `[${musicIndex}:a]${AUDIO_FORMAT},atrim=0:${D},asetpts=PTS-STARTPTS,volume=${level.toFixed(3)},afade=t=in:d=0.05,afade=t=out:st=${(D - fadeOut).toFixed(3)}:d=${fadeOut.toFixed(3)}[music]`
+        );
+        audioParts.push("[music]");
+      }
+      if (voiceIndex >= 0 && !isIntro) {
+        filters.push(`[${voiceIndex}:a]${AUDIO_FORMAT},${delayFilter(0.6 * k)}anull[voice]`);
+        audioParts.push("[voice]");
+      }
+      if (audioParts.length === 0) {
+        filters.push(`${SILENT_AUDIO_SOURCE},atrim=0:${D}[a]`);
+      } else if (audioParts.length === 1) {
+        filters.push(`${audioParts[0]}apad=whole_dur=${D}[a]`);
+      } else {
+        filters.push(`${audioParts.join("")}amix=inputs=${audioParts.length}:duration=longest:normalize=0:dropout_transition=0,apad=whole_dur=${D}[a]`);
+      }
+
+      await this.exec(
+        [...inputs, "-filter_complex", filters.join(";"), "-map", "[v]", "-map", "[a]", "-t", String(D), "-r", String(fps), "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", outputPath],
+        `renderBrandCard(${opts.kind})`
+      );
+    } finally {
+      await fs.rm(textDir, { recursive: true, force: true }).catch(() => {});
+    }
+  }
+
+  /** Decodes an image to raw RGBA pixels (for pixel-level processing in JS, e.g. button background removal). */
+  async decodeImageRgba(inputPath: string): Promise<{ width: number; height: number; data: Uint8Array }> {
+    const probe = await this.probe(inputPath);
+    if (!probe.width || !probe.height) throw new AppError("FFMPEG_ERROR", `Not a readable image: ${inputPath}`, { retryable: false });
+    const dir = await this.tempDir("decode-");
+    try {
+      const raw = path.join(dir, "image.rgba");
+      await this.exec(["-i", inputPath, "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgba", raw], "decodeImageRgba");
+      return { width: probe.width, height: probe.height, data: new Uint8Array(await fs.readFile(raw)) };
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true }).catch(() => {});
+    }
+  }
+
+  /** Pre-renders the SUBSCRIBE button (pill + label) as a PNG, for renderBrandCard's `buttons`. */
+  async renderSubscribeButton(pillPath: string, outputPath: string, label = "SUBSCRIBE"): Promise<void> {
+    const textDir = await this.tempDir("subscribe-");
+    try {
+      const file = path.join(textDir, "label.txt");
+      await fs.writeFile(file, label, "utf-8");
+      await this.exec(
+        [
+          "-i",
+          pillPath,
+          "-vf",
+          `drawtext=fontfile='/System/Library/Fonts/Supplemental/Arial Rounded Bold.ttf':textfile='${escapeFilterPath(file)}':expansion=none:fontsize=h*0.48:fontcolor=white:x=(w-text_w)/2:y=(h*0.86-text_h)/2`,
+          "-frames:v",
+          "1",
+          outputPath,
+        ],
+        "renderSubscribeButton"
+      );
+    } finally {
+      await fs.rm(textDir, { recursive: true, force: true }).catch(() => {});
+    }
+  }
+
+  /**
+   * Joins opening card + clip segments + end card into one video:
+   *  - clips are concatenated (with their audio) and, when `watermark` is
+   *    given, get the channel logo overlaid in a corner - the cards don't;
+   *  - the opening hands over to the first clip with a hard-edged shrinking
+   *    circle (custom xfade + audio crossfade), like the channel's
+   *    existing videos, so the clips start `transitionSec` before the card ends;
+   *  - the end card follows with a straight cut.
+   * Returns where the clips start in the output (for narration/subtitle offsets).
+   */
+  async joinWithBranding(
+    clipPaths: string[],
+    outputPath: string,
+    opts: {
+      width: number;
+      height: number;
+      fps: number;
+      introPath?: string;
+      outroPath?: string;
+      transitionSec?: number;
+      /** Logo over the clips: centre as fractions of the frame, height as % of the frame height. */
+      watermark?: { logoPath: string; centerX: number; centerY: number; sizePct: number; opacity: number };
+    }
+  ): Promise<{ contentStartSec: number }> {
+    if (clipPaths.length === 0) throw new AppError("FFMPEG_ERROR", "joinWithBranding called with no clips.", { retryable: false });
+    const { width: W, height: H, fps } = opts;
+    const probes = await Promise.all(clipPaths.map((p) => this.probe(p)));
+    const introProbe = opts.introPath ? await this.probe(opts.introPath) : null;
+    const T = opts.introPath ? Math.min(opts.transitionSec ?? 0.5, Math.max(0, (introProbe?.durationSec ?? 0) - 0.1)) : 0;
+
+    const inputs: string[] = [];
+    const filters: string[] = [];
+    const norm = (i: number) => `scale=${W}:${H}:force_original_aspect_ratio=decrease,pad=${W}:${H}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=${fps},settb=AVTB,format=yuv420p`;
+    let n = 0;
+    const clipLabels: string[] = [];
+    probes.forEach((probe, idx) => {
+      inputs.push("-i", clipPaths[idx]);
+      filters.push(`[${n}:v]${norm(n)}[cv${idx}]`);
+      filters.push(probe.hasAudio ? `[${n}:a:0]${AUDIO_FORMAT}[ca${idx}]` : `${SILENT_AUDIO_SOURCE},atrim=0:${probe.durationSec}[ca${idx}]`);
+      clipLabels.push(`[cv${idx}][ca${idx}]`);
+      n++;
+    });
+    filters.push(`${clipLabels.join("")}concat=n=${clipPaths.length}:v=1:a=1[content_v][content_a]`);
+
+    let video = "content_v";
+    if (opts.watermark) {
+      inputs.push("-loop", "1", "-framerate", String(fps), "-i", opts.watermark.logoPath);
+      const wmH = Math.max(8, Math.round((H * opts.watermark.sizePct) / 100 / 2) * 2);
+      // Centre at (centerX, centerY) of the frame, clamped so the logo always stays fully on screen.
+      const cx = Math.max(0, Math.min(1, opts.watermark.centerX));
+      const cy = Math.max(0, Math.min(1, opts.watermark.centerY));
+      const x = `'max(0,min(W-w,${cx.toFixed(4)}*W-w/2))'`;
+      const y = `'max(0,min(H-h,${cy.toFixed(4)}*H-h/2))'`;
+      const opacity = Math.max(0, Math.min(1, opts.watermark.opacity));
+      filters.push(`[${n}:v]format=rgba,scale=-2:${wmH},colorchannelmixer=aa=${opacity.toFixed(2)}[wm]`);
+      filters.push(`[content_v][wm]overlay=x=${x}:y=${y}:shortest=1,format=yuv420p[content_wm]`);
+      video = "content_wm";
+      n++;
+    }
+    let audio = "content_a";
+
+    if (opts.introPath && introProbe) {
+      inputs.push("-i", opts.introPath);
+      filters.push(`[${n}:v]${norm(n)}[iv]`);
+      filters.push(`[${n}:a:0]${AUDIO_FORMAT}[ia]`);
+      // Hard-edged shrinking circle (the built-in circleclose has a very soft radial edge):
+      // inside a radius that goes from the frame's half-diagonal (P=1) to 0 show the opening.
+      const circle = `if(lt(hypot(X-W/2\\,Y-H/2)\\,P*hypot(W/2\\,H/2))\\,A\\,B)`;
+      filters.push(`[iv][${video}]xfade=transition=custom:expr='${circle}':duration=${T.toFixed(3)}:offset=${(introProbe.durationSec - T).toFixed(3)}[intro_v]`);
+      filters.push(`[ia][${audio}]acrossfade=d=${T.toFixed(3)}[intro_a]`);
+      video = "intro_v";
+      audio = "intro_a";
+      n++;
+    }
+    if (opts.outroPath) {
+      inputs.push("-i", opts.outroPath);
+      filters.push(`[${n}:v]${norm(n)}[ov]`);
+      filters.push(`[${n}:a:0]${AUDIO_FORMAT}[oa]`);
+      filters.push(`[${video}][${audio}][ov][oa]concat=n=2:v=1:a=1[final_v][final_a]`);
+      video = "final_v";
+      audio = "final_a";
+      n++;
+    }
+
+    await this.exec(
+      [...inputs, "-filter_complex", filters.join(";"), "-map", `[${video}]`, "-map", `[${audio}]`, "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-movflags", "+faststart", outputPath],
+      "joinWithBranding"
+    );
+    return { contentStartSec: introProbe ? introProbe.durationSec - T : 0 };
+  }
+
+  // ---------------------------------------------------------------------
   // Assembly (spec #23 pipeline)
   // ---------------------------------------------------------------------
 
@@ -403,14 +735,15 @@ export class FFmpegService {
    * padded to match (video freezes its last frame; audio gets silence)
    * so nothing gets cut off.
    */
-  async addAudio(videoPath: string, audioPath: string, outputPath: string): Promise<void> {
+  async addAudio(videoPath: string, audioPath: string, outputPath: string, opts: { delaySec?: number } = {}): Promise<void> {
     const [videoProbe, audioProbe] = await Promise.all([this.probe(videoPath), this.probe(audioPath)]);
-    const targetDuration = Math.max(videoProbe.durationSec, audioProbe.durationSec);
+    const delaySec = opts.delaySec ?? 0;
+    const targetDuration = Math.max(videoProbe.durationSec, audioProbe.durationSec + delaySec);
     const videoPad = Math.max(0, targetDuration - videoProbe.durationSec);
 
     const filter = [
       videoPad > 0.05 ? `[0:v]tpad=stop_mode=clone:stop_duration=${videoPad}[v]` : `[0:v]null[v]`,
-      `[1:a]apad=whole_dur=${targetDuration}[a]`,
+      `[1:a]${delayFilter(delaySec)}apad=whole_dur=${targetDuration}[a]`,
     ].join(";");
 
     await this.exec(
@@ -425,21 +758,23 @@ export class FFmpegService {
    * sound survives. Summed at unity gain (amix normalize=0) - each input
    * keeps its own level; music volume is set when preparing the music bed.
    * Falls back to addAudio when the video has no audio stream. The shorter
-   * side is padded, never truncated (same rule as addAudio).
+   * side is padded, never truncated (same rule as addAudio). `delaySec`
+   * starts the added audio later (e.g. narration after the opening screen).
    */
-  async mixAudioIntoVideo(videoPath: string, audioPath: string, outputPath: string): Promise<void> {
+  async mixAudioIntoVideo(videoPath: string, audioPath: string, outputPath: string, opts: { delaySec?: number } = {}): Promise<void> {
     const [videoProbe, audioProbe] = await Promise.all([this.probe(videoPath), this.probe(audioPath)]);
     if (!videoProbe.hasAudio) {
-      await this.addAudio(videoPath, audioPath, outputPath);
+      await this.addAudio(videoPath, audioPath, outputPath, opts);
       return;
     }
-    const targetDuration = Math.max(videoProbe.durationSec, audioProbe.durationSec);
+    const delaySec = opts.delaySec ?? 0;
+    const targetDuration = Math.max(videoProbe.durationSec, audioProbe.durationSec + delaySec);
     const videoPad = Math.max(0, targetDuration - videoProbe.durationSec);
 
     const filter = [
       videoPad > 0.05 ? `[0:v]tpad=stop_mode=clone:stop_duration=${videoPad}[v]` : `[0:v]null[v]`,
       `[0:a:0]${AUDIO_FORMAT}[va]`,
-      `[1:a:0]${AUDIO_FORMAT}[xa]`,
+      `[1:a:0]${AUDIO_FORMAT},${delayFilter(delaySec)}anull[xa]`,
       `[va][xa]amix=inputs=2:duration=longest:normalize=0:dropout_transition=0,apad=whole_dur=${targetDuration}[a]`,
     ].join(";");
 
@@ -549,8 +884,11 @@ export class FFmpegService {
     }
   }
 
-  async extractFrame(videoPath: string, outputPath: string, timestampSec: number): Promise<void> {
-    await this.exec(["-ss", String(timestampSec), "-i", videoPath, "-frames:v", "1", outputPath], "extractFrame");
+  /** One frame as an image; `fit` letterboxes it into that size (like the render) instead of keeping the source size. */
+  async extractFrame(videoPath: string, outputPath: string, timestampSec: number, fit?: { width: number; height: number }): Promise<void> {
+    const args = ["-ss", String(timestampSec), "-i", videoPath, "-frames:v", "1"];
+    if (fit) args.push("-vf", this.fitFilter("FIT", fit.width, fit.height));
+    await this.exec([...args, outputPath], "extractFrame");
   }
 
   async createThumbnail(videoPath: string, outputPath: string, opts: { timestampSec: number; width: number; height: number }): Promise<void> {

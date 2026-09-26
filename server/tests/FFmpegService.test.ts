@@ -215,6 +215,86 @@ describe("FFmpegService (real ffmpeg/ffprobe)", () => {
     expect(await meanVolumeDb(out)).toBeGreaterThan(-40);
   });
 
+  it("renderBrandCard renders opening and end screens (logo, buttons, music, voice) at the exact length", async () => {
+    const bg = path.join(dir, "brand-bg.png");
+    const logo = path.join(dir, "brand-logo.png");
+    const music = path.join(dir, "brand-music.m4a");
+    const voice = path.join(dir, "brand-voice.m4a");
+    await ffmpegService.generateColorImage(bg, { width: 640, height: 360, color: "0x335577", title: "BG", subtitle: " " });
+    await ffmpegService.generateColorImage(logo, { width: 200, height: 200, color: "0xF5A623", title: "L", subtitle: " " });
+    await ffmpegService.generateToneAudio(music, { durationSec: 2, volume: 0.5 }); // shorter than the card: must loop
+    await ffmpegService.generateToneAudio(voice, { durationSec: 1, frequency: 660, volume: 0.6 });
+    const buttons = { subscribe: logo, like: logo, share: logo };
+
+    for (const kind of ["INTRO", "OUTRO"] as const) {
+      const out = path.join(dir, `brand-${kind}.mp4`);
+      await ffmpegService.renderBrandCard(out, {
+        kind,
+        width: 320,
+        height: 180,
+        fps: 24,
+        durationSec: kind === "INTRO" ? 4 : 5,
+        backgroundPath: kind === "INTRO" ? bg : undefined, // end screen: plain white
+        logoPath: logo,
+        openingText: `Kids' "ABC": 100% fun`,
+        title: kind === "INTRO" ? "A\\Z – 50%" : undefined,
+        textColor: "#FFEE00",
+        buttons,
+        musicPath: music,
+        voicePath: kind === "OUTRO" ? voice : undefined,
+      });
+      const probe = await ffmpegService.probe(out);
+      expect(probe.width).toBe(320);
+      expect(probe.height).toBe(180);
+      expect(probe.hasAudio).toBe(true);
+      expect(Math.abs(probe.durationSec - (kind === "INTRO" ? 4 : 5))).toBeLessThan(0.15);
+      expect(await meanVolumeDb(out)).toBeGreaterThan(-45); // music (and voice) actually present
+    }
+  });
+
+  it("joinWithBranding: circle transition out of the opening, watermark on clips, end card after", async () => {
+    const intro = path.join(dir, "brand-INTRO.mp4"); // from the previous test (4s)
+    const outro = path.join(dir, "brand-OUTRO.mp4"); // 5s
+    const clip = path.join(dir, "join-clip.mp4");
+    const clipSrc = path.join(dir, "join-clip-src.mp4");
+    await ffmpegService.generateTestVideo(clipSrc, { width: 320, height: 180, durationSec: 3, fps: 24, color: "0x224466", title: "C" });
+    await ffmpegService.normalizeVideoClip(clipSrc, clip, { width: 320, height: 180, fps: 24 });
+
+    const out = path.join(dir, "joined.mp4");
+    const { contentStartSec } = await ffmpegService.joinWithBranding([clip, clip], out, {
+      width: 320,
+      height: 180,
+      fps: 24,
+      introPath: intro,
+      outroPath: outro,
+      transitionSec: 0.5,
+      watermark: { logoPath: path.join(dir, "brand-logo.png"), centerX: 0.9, centerY: 0.85, sizePct: 20, opacity: 0.9 },
+    });
+    expect(contentStartSec).toBeCloseTo(3.5, 1);
+    const probe = await ffmpegService.probe(out);
+    expect(probe.hasAudio).toBe(true);
+    // 4s opening - 0.5s overlap + 2 x 3s clips + 5s end screen
+    expect(Math.abs(probe.durationSec - 14.5)).toBeLessThan(0.2);
+  });
+
+  it("mixAudioIntoVideo delaySec starts the added audio later", async () => {
+    const video = path.join(dir, "delay-video.mp4");
+    const silentAudio = path.join(dir, "delay-video-audio.mp4");
+    const tone = path.join(dir, "delay-tone.m4a");
+    await ffmpegService.generateTestVideo(video, { width: 320, height: 180, durationSec: 4, fps: 24, color: "0x223344", title: "D" });
+    await ffmpegService.normalizeVideoClip(video, silentAudio, { width: 320, height: 180, fps: 24 }); // adds a silent track
+    await ffmpegService.generateToneAudio(tone, { durationSec: 1.5, volume: 0.6 });
+
+    const out = path.join(dir, "delay-mixed.mp4");
+    await ffmpegService.mixAudioIntoVideo(silentAudio, tone, out, { delaySec: 2 });
+    const head = path.join(dir, "delay-head.mp4");
+    const tail = path.join(dir, "delay-tail.mp4");
+    await ffmpegService.trimVideo(out, head, { startSec: 0, durationSec: 1.8 });
+    await ffmpegService.trimVideo(out, tail, { startSec: 2.2, durationSec: 1 });
+    expect(await meanVolumeDb(head)).toBeLessThan(-80);
+    expect(await meanVolumeDb(tail)).toBeGreaterThan(-40);
+  });
+
   it("render pipeline keeps clip audio through concat and layers music on top", async () => {
     const withSound = path.join(dir, "pipe-a.mp4");
     const noSoundSrc = path.join(dir, "pipe-b-src.mp4");

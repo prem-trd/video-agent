@@ -1,6 +1,9 @@
 import type {
   AgentStatus,
   AudioTrack,
+  Channel,
+  ChannelFileKind,
+  ChannelPatch,
   ChatMessage,
   ChatTurnResult,
   MediaAsset,
@@ -116,6 +119,29 @@ export const api = {
   patchTimelineItem: (id: string, itemId: string, patch: { displayDurationSec?: number; fitMode?: string; trimStartSec?: number; trimEndSec?: number }) =>
     request<TimelineItem>(`/api/projects/${id}/timeline/${itemId}`, { method: "PATCH", body: JSON.stringify(patch) }),
   removeTimelineItem: (id: string, itemId: string) => request<void>(`/api/projects/${id}/timeline/${itemId}`, { method: "DELETE" }),
+
+  getChannel: () => request<Channel>("/api/channel"),
+  updateChannel: (patch: ChannelPatch) => request<Channel>("/api/channel", { method: "PATCH", body: JSON.stringify(patch) }),
+  uploadChannelFile: (kind: ChannelFileKind, file: File) => {
+    const form = new FormData();
+    form.append("file", file);
+    return request<Channel>(`/api/channel/files/${kind}`, { method: "POST", body: form });
+  },
+  removeChannelFile: (kind: ChannelFileKind) => request<Channel>(`/api/channel/files/${kind}`, { method: "DELETE" }),
+  channelFileUrl: (kind: ChannelFileKind, version: string) => `/api/channel/files/${kind}?v=${encodeURIComponent(version)}`,
+
+  uploadBrandBackground: (id: string, file: File) => {
+    const form = new FormData();
+    form.append("file", file);
+    return request<Project>(`/api/projects/${id}/branding/background`, { method: "POST", body: form });
+  },
+  removeBrandBackground: (id: string) => request<Project>(`/api/projects/${id}/branding/background`, { method: "DELETE" }),
+  generateBackgroundPrompt: (id: string, guidance?: string) =>
+    request<{ prompt: string }>(`/api/projects/${id}/branding/background-prompt`, { method: "POST", body: JSON.stringify({ guidance }) }),
+  brandBackgroundUrl: (id: string, version: string) => `/api/projects/${id}/branding/background?v=${encodeURIComponent(version)}`,
+  brandFrameUrl: (id: string, version: string) => `/api/projects/${id}/branding/frame?v=${encodeURIComponent(version)}`,
+  brandPreviewUrl: (id: string, kind: "intro" | "outro" | "watermark", version: string) =>
+    `/api/projects/${id}/branding/preview/${kind}?v=${encodeURIComponent(version)}`,
 
   videoUrl: (id: string) => `/api/projects/${id}/video`,
   thumbnailUrl: (id: string) => `/api/projects/${id}/thumbnail`,

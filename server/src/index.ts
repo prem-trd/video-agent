@@ -13,6 +13,8 @@ import { mediaRouter } from "./routes/media.js";
 import { uploadRouter } from "./routes/upload.js";
 import { timelineRouter } from "./routes/timeline.js";
 import { eventsRouter } from "./routes/events.js";
+import { brandingRouter } from "./routes/branding.js";
+import { channelRouter } from "./routes/channel.js";
 import { AppError } from "./utils/errors.js";
 
 const app = express();
@@ -31,6 +33,8 @@ app.use("/api/projects/:id/scenes", scenesRouter);
 app.use("/api/projects/:id/assets", assetsRouter);
 app.use("/api/projects/:id/timeline", timelineRouter);
 app.use("/api/projects/:id/events", eventsRouter);
+app.use("/api/projects/:id/branding", brandingRouter);
+app.use("/api/channel", channelRouter);
 app.use("/api/projects/:id", agentRouter); // /cancel, /status, /generate-prompts, /assemble, /renders/latest
 app.use("/api/projects/:id", uploadRouter); // /upload, /upload-audio, /upload-subtitles
 app.use("/api/projects/:id", mediaRouter); // /video, /thumbnail, /media, /files/*

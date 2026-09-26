@@ -62,9 +62,65 @@ export interface Project {
   script: unknown;
   styleBible: StyleBible | null;
   storyContext: string;
+  introEnabled: boolean;
+  outroEnabled: boolean;
+  hasBrandBackground: boolean;
+  brandBackgroundPrompt: string;
   createdAt: string;
   updatedAt: string;
 }
+
+/** The YouTube channel's branding, shared by every project's opening/end screens. */
+export interface Channel {
+  id: string;
+  name: string;
+  hasLogo: boolean;
+  /** Changes whenever the logo is replaced (use as a cache key). */
+  logoName: string;
+  hasEndLogo: boolean;
+  openingMusicName: string;
+  endAudioName: string;
+  fontName: string;
+  hasLikeButton: boolean;
+  hasShareButton: boolean;
+  hasSubscribeButton: boolean;
+  textColor: string;
+  openingText: string;
+  introDurationSec: number;
+  outroDurationSec: number;
+  showTitleOnIntro: boolean;
+  musicVolume: number;
+  endBackground: "WHITE" | "VIDEO";
+  watermarkEnabled: boolean;
+  /** Logo centre as fractions of the frame (0-1). */
+  watermarkX: number;
+  watermarkY: number;
+  watermarkSizePct: number;
+  watermarkOpacity: number;
+  updatedAt: string;
+}
+
+/** Uploadable channel files (see server ChannelService.CHANNEL_FILES). */
+export type ChannelFileKind = "logo" | "endLogo" | "openingMusic" | "endAudio" | "font" | "likeButton" | "shareButton" | "subscribeButton";
+
+export type ChannelPatch = Partial<
+  Pick<
+    Channel,
+    | "name"
+    | "textColor"
+    | "openingText"
+    | "introDurationSec"
+    | "outroDurationSec"
+    | "showTitleOnIntro"
+    | "musicVolume"
+    | "endBackground"
+    | "watermarkEnabled"
+    | "watermarkX"
+    | "watermarkY"
+    | "watermarkSizePct"
+    | "watermarkOpacity"
+  >
+>;
 
 export interface Scene {
   id: string;

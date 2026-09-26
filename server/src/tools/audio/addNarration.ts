@@ -5,12 +5,14 @@ import { prisma } from "../../database/prisma.js";
 import { ffmpegService } from "../../media/ffmpeg/FFmpegService.js";
 import { RenderPaths } from "../../services/RenderPaths.js";
 import { AppError } from "../../utils/errors.js";
+import { BrandingService } from "../../services/BrandingService.js";
 
 const InputSchema = z.object({}).strict();
 
 /**
  * Mixes the uploaded narration track over the rendered video's own audio
- * (the uploaded clips' sound is kept, not replaced).
+ * (the uploaded clips' sound is kept, not replaced), starting after the
+ * opening screen if the render has one.
  * Optional - if the user hasn't uploaded narration, skip straight to
  * add_music or add_subtitles. No TTS is generated here.
  */
@@ -34,7 +36,8 @@ export const addNarrationTool: Tool<z.infer<typeof InputSchema>> = {
     }
 
     const outputPath = RenderPaths.withNarration(ctx.projectId);
-    await ffmpegService.mixAudioIntoVideo(silentVideoPath, track.filePath, outputPath);
+    const { introSec } = await BrandingService.readManifest(ctx.projectId);
+    await ffmpegService.mixAudioIntoVideo(silentVideoPath, track.filePath, outputPath, { delaySec: introSec });
 
     const probe = await ffmpegService.probe(outputPath);
     return { filePath: outputPath, durationSec: probe.durationSec, hasAudio: probe.hasAudio };

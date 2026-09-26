@@ -56,6 +56,10 @@ export function serializeProject(p: Project) {
     script: safeParse(p.scriptJson),
     styleBible: safeParse(p.styleBible) as StyleBible | null,
     storyContext: p.storyContext,
+    introEnabled: p.introEnabled,
+    outroEnabled: p.outroEnabled,
+    hasBrandBackground: Boolean(p.brandBackgroundPath),
+    brandBackgroundPrompt: p.brandBackgroundPrompt,
     createdAt: p.createdAt,
     updatedAt: p.updatedAt,
   };

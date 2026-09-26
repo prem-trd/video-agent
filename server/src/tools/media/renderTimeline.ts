@@ -8,6 +8,7 @@ import { ffmpegService } from "../../media/ffmpeg/FFmpegService.js";
 import { RenderPaths } from "../../services/RenderPaths.js";
 import { parseResolution } from "../../utils/resolution.js";
 import { AppError } from "../../utils/errors.js";
+import { BrandingService, OPENING_TRANSITION_SEC } from "../../services/BrandingService.js";
 
 const InputSchema = z.object({}).strict();
 
@@ -15,7 +16,9 @@ const InputSchema = z.object({}).strict();
  * Converts every active timeline item into a uniform video segment (images
  * become fixed-duration clips, videos are normalized/trimmed - never
  * stretched, per each item's fitMode) and concatenates them in order into
- * one silent full-length video. This is the "convert images to video,
+ * one full-length video (keeping each clip's own audio), wrapped in the
+ * channel's opening/end screens when enabled (circle transition out of the
+ * opening, logo watermark over the clips). This is the "convert images to video,
  * apply aspect-ratio handling, concatenate" stage of the assembly
  * pipeline. Requires every scene (if any exist) to have matched media on
  * the timeline, or at least one unmatched item for a pure slideshow.
@@ -23,7 +26,7 @@ const InputSchema = z.object({}).strict();
 export const renderTimelineTool: Tool<z.infer<typeof InputSchema>> = {
   name: "render_timeline",
   description:
-    "Build the timeline, normalize every item (image-to-video conversion, aspect-ratio fit/crop/blur, trimming), and concatenate them in order into one silent full-length video. Call this after uploads are matched to scenes (or otherwise placed on the timeline). add_narration/add_music come next.",
+    "Build the timeline, normalize every item (image-to-video conversion, aspect-ratio fit/crop/blur, trimming), and concatenate them in order into one full-length video (clips keep their own audio), adding the channel's opening and end screens when enabled. Call this after uploads are matched to scenes (or otherwise placed on the timeline). add_narration/add_music come next.",
   inputSchema: InputSchema,
   retryable: true,
   timeoutMs: 300_000,
@@ -72,11 +75,33 @@ export const renderTimelineTool: Tool<z.infer<typeof InputSchema>> = {
         segmentPaths.push(segmentPath);
       }
 
+      const brand = await BrandingService.plan(project);
+      const introPath = brand.intro ? path.join(tempDir, "card-intro.mp4") : undefined;
+      const outroPath = brand.outro ? path.join(tempDir, "card-outro.mp4") : undefined;
+      if (introPath) await BrandingService.renderCard(project, brand.channel, "INTRO", introPath, { width, height, fallbackVideo: segmentPaths[0] });
+      if (outroPath) await BrandingService.renderCard(project, brand.channel, "OUTRO", outroPath, { width, height, fallbackVideo: segmentPaths[segmentPaths.length - 1] });
+
       const outputPath = RenderPaths.silentVideo(ctx.projectId);
-      await ffmpegService.concatenateVideos(segmentPaths, outputPath, { width, height, fps: project.fps });
+      const { contentStartSec } = await ffmpegService.joinWithBranding(segmentPaths, outputPath, {
+        width,
+        height,
+        fps: project.fps,
+        introPath,
+        outroPath,
+        transitionSec: OPENING_TRANSITION_SEC,
+        watermark: await BrandingService.watermark(brand.channel),
+      });
+      await BrandingService.writeManifest(ctx.projectId, { introSec: contentStartSec, outroSec: brand.outroSec });
       const probe = await ffmpegService.probe(outputPath);
 
-      return { filePath: outputPath, itemCount: items.length, durationSec: probe.durationSec };
+      return {
+        filePath: outputPath,
+        itemCount: items.length,
+        durationSec: probe.durationSec,
+        openingScreenSec: brand.introSec,
+        clipsStartAtSec: contentStartSec,
+        endScreenSec: brand.outroSec,
+      };
     } finally {
       await fs.rm(tempDir, { recursive: true, force: true }).catch(() => {});
     }

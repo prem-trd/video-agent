@@ -47,6 +47,9 @@ const PatchProjectSchema = z
     videoType: z.string().optional(),
     narrationRequired: z.boolean().optional(),
     musicRequired: z.boolean().optional(),
+    introEnabled: z.boolean().optional(),
+    outroEnabled: z.boolean().optional(),
+    brandBackgroundPrompt: z.string().optional(),
   })
   .strict();
 

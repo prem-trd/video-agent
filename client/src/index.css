@@ -116,8 +116,10 @@ select:focus {
   letter-spacing: -0.01em;
 }
 
-.topbar .theme-toggle {
+.topbar-actions {
   justify-self: end;
+  display: flex;
+  gap: 8px;
 }
 
 .mode-switch {
@@ -158,6 +160,9 @@ select:focus {
     padding: 8px 12px;
   }
   .brand-name {
+    display: none;
+  }
+  .topbar-label {
     display: none;
   }
   .mode-label {
@@ -977,3 +982,232 @@ select:focus {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* ---------- Branding (opening / end screens) ---------- */
+
+.field-hint {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.brand-file-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.brand-file-row input[type="file"] {
+  min-width: 0;
+  flex: 1;
+}
+
+.brand-logo-thumb {
+  width: 56px;
+  height: 56px;
+  object-fit: contain;
+  border-radius: 8px;
+  background: repeating-conic-gradient(var(--surface-2) 0% 25%, var(--surface) 0% 50%) 50% / 12px 12px;
+  border: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.brand-bg-thumb {
+  width: 112px;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.brand-logo-thumb.empty,
+.brand-bg-thumb.empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  font-size: 10.5px;
+  color: var(--text-dim);
+  background: var(--surface-2);
+  padding: 4px;
+}
+
+.brand-toggles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+}
+
+.brand-previews {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.brand-preview {
+  margin: 0;
+}
+
+.brand-preview figcaption {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-top: 4px;
+}
+
+.brand-preview-frame {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  background: #000;
+  border-radius: 8px;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.brand-preview-frame img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: opacity 0.2s;
+}
+
+/* Rough guide to where YouTube end-screen elements (subscribe / video cards) tend to be placed. */
+.brand-preview-frame.safe-zone::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    linear-gradient(rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0.16)) 6% 88% / 38% 42% no-repeat,
+    linear-gradient(rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0.16)) 94% 88% / 38% 42% no-repeat;
+  outline: 1px dashed rgba(255, 255, 255, 0.35);
+  outline-offset: -1px;
+}
+
+.modal.modal-wide {
+  max-width: 640px;
+}
+
+.modal-section {
+  margin: 20px 0 10px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+}
+
+.brand-audio {
+  width: 100%;
+  height: 32px;
+}
+
+.watermark-controls {
+  margin-top: 12px;
+  padding: 10px;
+  border-radius: 8px;
+  background: var(--surface-2);
+}
+
+.brand-buttons-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0;
+}
+
+/* ---------- Watermark drag & zoom editor ---------- */
+
+.wm-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.wm-frame {
+  position: relative;
+  width: 100%;
+  background: #000;
+  border-radius: 8px;
+  overflow: hidden;
+  user-select: none;
+  touch-action: none;
+}
+
+.wm-frame-img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  pointer-events: none;
+}
+
+.wm-frame-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  text-align: center;
+  font-size: 11.5px;
+  color: #9a9daa;
+  background: repeating-conic-gradient(#2a2c35 0% 25%, #22242c 0% 50%) 50% / 16px 16px;
+}
+
+.wm-logo-box {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  cursor: grab;
+  outline: 1.5px dashed rgba(255, 255, 255, 0.85);
+  outline-offset: 2px;
+  touch-action: none;
+}
+
+.wm-logo-box:active {
+  cursor: grabbing;
+}
+
+.wm-logo-box img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  pointer-events: auto;
+}
+
+.wm-handle {
+  position: absolute;
+  right: -7px;
+  bottom: -7px;
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  background: #fff;
+  border: 2px solid var(--accent);
+  cursor: nwse-resize;
+}
+
+.wm-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.wm-snaps {
+  display: flex;
+  gap: 4px;
+}
+
+.modal.wm-modal {
+  max-width: min(1100px, 92vw);
+}
+

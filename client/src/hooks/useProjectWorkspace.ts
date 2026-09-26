@@ -266,6 +266,38 @@ export function useProjectWorkspace(projectId: string | null) {
     [projectId, refreshAll]
   );
 
+  const uploadBrandBackground = useCallback(
+    async (file: File) => {
+      if (!projectId) return;
+      await api.uploadBrandBackground(projectId, file);
+      await refreshAll();
+    },
+    [projectId, refreshAll]
+  );
+
+  const removeBrandBackground = useCallback(async () => {
+    if (!projectId) return;
+    await api.removeBrandBackground(projectId);
+    await refreshAll();
+  }, [projectId, refreshAll]);
+
+  const generateBackgroundPrompt = useCallback(
+    async (guidance?: string) => {
+      if (!projectId) return;
+      setError(null);
+      setSending(true);
+      try {
+        await api.generateBackgroundPrompt(projectId, guidance);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+      } finally {
+        setSending(false);
+        await refreshAll().catch(() => {});
+      }
+    },
+    [projectId, refreshAll]
+  );
+
   const removeTimelineItem = useCallback(
     async (itemId: string) => {
       if (!projectId) return;
@@ -305,6 +337,9 @@ export function useProjectWorkspace(projectId: string | null) {
     reorderTimelineItem,
     patchTimelineItem,
     removeTimelineItem,
+    uploadBrandBackground,
+    removeBrandBackground,
+    generateBackgroundPrompt,
     refreshAll,
   };
 }

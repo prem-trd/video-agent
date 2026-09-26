@@ -6,6 +6,7 @@ import { RenderPaths } from "../../services/RenderPaths.js";
 import { ProjectService } from "../../services/ProjectService.js";
 import { TimelineService } from "../../services/TimelineService.js";
 import { parseResolution } from "../../utils/resolution.js";
+import { BrandingService } from "../../services/BrandingService.js";
 
 const InputSchema = z.object({}).strict();
 
@@ -86,7 +87,8 @@ export const validateVideoTool: Tool<z.infer<typeof InputSchema>> = {
       }
 
       const timelineDuration = timeline.reduce((max, item) => Math.max(max, item.endTime), 0);
-      const issue = durationIssue(probe.durationSec, timelineDuration);
+      const { introSec, outroSec } = await BrandingService.readManifest(ctx.projectId);
+      const issue = durationIssue(probe.durationSec, timelineDuration > 0 ? timelineDuration + introSec + outroSec : 0);
       if (issue) issues.push(issue);
     }
 

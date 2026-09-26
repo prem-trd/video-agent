@@ -5,6 +5,7 @@ import type { Tool } from "../types.js";
 import { SceneService } from "../../services/SceneService.js";
 import { RenderPaths } from "../../services/RenderPaths.js";
 import { AppError } from "../../utils/errors.js";
+import { BrandingService } from "../../services/BrandingService.js";
 
 const InputSchema = z.object({}).strict();
 
@@ -29,7 +30,8 @@ export function formatVttTime(totalSec: number): string {
 /**
  * Generates SRT and WebVTT subtitle files from each scene's narration/
  * on-screen text, timed using the scene's own (deterministic) startTime/
- * endTime. Entirely optional - only meaningful if the project actually has
+ * endTime (shifted by the opening screen's length, if the render has one).
+ * Entirely optional - only meaningful if the project actually has
  * narration or on-screen text; scenes without any are skipped, and if NO
  * scene has any, this tool reports that subtitles aren't applicable rather
  * than writing an empty file.
@@ -41,9 +43,10 @@ export const generateSubtitlesTool: Tool<z.infer<typeof InputSchema>> = {
   retryable: true,
   async execute(_input, ctx) {
     const scenes = await SceneService.list(ctx.projectId);
+    const { introSec } = await BrandingService.readManifest(ctx.projectId);
     const cues = scenes
       .filter((s) => s.narration || s.onScreenText)
-      .map((s, i) => ({ index: i + 1, start: s.startTime, end: s.endTime, text: s.narration || s.onScreenText }));
+      .map((s, i) => ({ index: i + 1, start: s.startTime + introSec, end: s.endTime + introSec, text: s.narration || s.onScreenText }));
 
     if (cues.length === 0) {
       throw new AppError("VALIDATION_ERROR", "No scene has narration or on-screen text - subtitles aren't applicable to this project. Skip this step.", { retryable: false });

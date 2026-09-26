@@ -35,6 +35,11 @@ model Project {
   scriptJson        String   @default("null") // serialized story structure
   styleBible        String   @default("null") // serialized StyleBible
   storyContext      String   @default("") // overall narrative arc / continuity notes
+  // Opening / end screen (branding) - logo, name, font etc. come from the Channel
+  introEnabled          Boolean @default(true)
+  outroEnabled          Boolean @default(true)
+  brandBackgroundPath   String  @default("") // uploaded per-video background image (absolute path), "" = fall back to a blurred clip frame
+  brandBackgroundPrompt String  @default("") // generated prompt for that background image
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
@@ -313,4 +318,35 @@ model ChatMessage {
   createdAt  DateTime @default(now())
 
   @@index([projectId])
+}
+
+/// The YouTube channel's branding, shared by every project's opening/end
+/// screens. Single row for now (ChannelService.get upserts it); kept as its
+/// own table so multiple channels can be added later without a data move.
+model Channel {
+  id               String   @id @default(cuid())
+  name             String   @default("")
+  logoPath         String   @default("") // opening logo; absolute path under <storage>/_channel/, "" = no logo
+  endLogoPath      String   @default("") // wide end-screen logo, "" = use the opening logo
+  openingMusicPath String   @default("") // music under the opening screen
+  endAudioPath     String   @default("") // end-screen voice/CTA ("don't forget to like & share")
+  fontPath         String   @default("") // uploaded .ttf/.otf for the opening text, "" = system serif
+  likeButtonPath      String @default("") // custom button images; "" = the app's built-in buttons
+  shareButtonPath     String @default("")
+  subscribeButtonPath String @default("")
+  textColor        String   @default("#FFFFFF")
+  openingText      String   @default("Welcome to") // typed in before the logo pops in, "" = none
+  introDurationSec Float    @default(6)
+  outroDurationSec Float    @default(6)
+  showTitleOnIntro Boolean  @default(false)
+  musicVolume      Float    @default(0.5) // opening music level (0-1); the end-screen music bed runs at a fraction of it
+  endBackground    String   @default("WHITE") // WHITE | VIDEO (the project's opening background)
+  watermarkEnabled  Boolean @default(true) // opening logo in a corner during the video (after the opening, before the end screen)
+  watermarkPosition String  @default("BOTTOM_RIGHT") // superseded by watermarkX/Y (free drag position); kept so existing rows migrate without data loss
+  watermarkX        Float   @default(0.94) // logo centre, as a fraction of the frame width (dragged in the UI)
+  watermarkY        Float   @default(0.9) // logo centre, as a fraction of the frame height
+  watermarkSizePct  Float   @default(14) // logo height as % of the frame height
+  watermarkOpacity  Float   @default(0.9)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
 }

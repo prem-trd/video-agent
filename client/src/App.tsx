@@ -9,6 +9,8 @@ import { AgentActivity } from "./features/activity/AgentActivity";
 import { ThemeToggle } from "./features/settings/ThemeToggle";
 import { FullVideoWorkspace } from "./features/assemble/FullVideoWorkspace";
 import { ModeSwitch, type WorkspaceMode } from "./components/ModeSwitch";
+import { ChannelSettingsModal } from "./features/settings/ChannelSettingsModal";
+import { useChannel } from "./hooks/useChannel";
 
 export default function App() {
   const { projects, createProject, deleteProject } = useProjects();
@@ -16,6 +18,8 @@ export default function App() {
   const [showNewProject, setShowNewProject] = useState(false);
   const [creating, setCreating] = useState(false);
   const [mode, setMode] = useState<WorkspaceMode>("prompts");
+  const [showChannelSettings, setShowChannelSettings] = useState(false);
+  const channel = useChannel();
 
   const workspace = useProjectWorkspace(selectedId);
 
@@ -65,7 +69,12 @@ export default function App() {
           <span className="brand-name">AI Video Studio</span>
         </div>
         <ModeSwitch mode={mode} onChange={setMode} />
-        <ThemeToggle />
+        <div className="topbar-actions">
+          <button className="theme-toggle" onClick={() => setShowChannelSettings(true)} title="Channel logo, name and screen settings">
+            📺 <span className="topbar-label">Channel</span>
+          </button>
+          <ThemeToggle />
+        </div>
       </div>
 
       <ProjectSidebar
@@ -109,6 +118,7 @@ export default function App() {
                 onMoveScene={workspace.moveScene}
                 onAddScenes={workspace.addScenes}
                 onRefresh={workspace.refreshAll}
+                onGenerateBackgroundPrompt={() => workspace.generateBackgroundPrompt()}
               />
             </>
           ) : (
@@ -128,6 +138,13 @@ export default function App() {
               onReorderTimelineItem={workspace.reorderTimelineItem}
               onPatchTimelineItem={workspace.patchTimelineItem}
               onAssemble={workspace.assemble}
+              channel={channel.channel}
+              channelConfigured={channel.configured}
+              onToggleBranding={workspace.updateProjectConfig}
+              onUploadBrandBackground={workspace.uploadBrandBackground}
+              onRemoveBrandBackground={workspace.removeBrandBackground}
+              onUpdateChannel={channel.update}
+              onOpenChannelSettings={() => setShowChannelSettings(true)}
             />
           )}
         </div>
@@ -141,6 +158,16 @@ export default function App() {
           />
         )}
       </main>
+
+      {showChannelSettings && channel.channel && (
+        <ChannelSettingsModal
+          channel={channel.channel}
+          onSave={channel.update}
+          onUploadFile={channel.uploadFile}
+          onRemoveFile={channel.removeFile}
+          onClose={() => setShowChannelSettings(false)}
+        />
+      )}
 
       {showNewProject && <NewProjectModal onCancel={() => setShowNewProject(false)} onSubmit={handleCreateProject} submitting={creating} />}
     </div>

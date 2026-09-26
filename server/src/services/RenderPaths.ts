@@ -16,6 +16,9 @@ export const RenderPaths = {
   subtitlesSrt: (projectId: string) => ProjectStorage.absolutePath(projectId, "assets/subtitles/subtitles.srt"),
   subtitlesVtt: (projectId: string) => ProjectStorage.absolutePath(projectId, "assets/subtitles/subtitles.vtt"),
   final: (projectId: string) => ProjectStorage.absolutePath(projectId, "renders/final.mp4"),
+  // Written by render_timeline: how long the opening/end screens in the current render are,
+  // so narration/subtitles/validation line up with what was actually rendered.
+  manifest: (projectId: string) => ProjectStorage.absolutePath(projectId, "renders/manifest.json"),
   // Thumbnails are versioned (thumbnails/thumbnail-vN.png, youtube-thumbnail-vN.png)
   // and looked up via the latest THUMBNAIL Asset row, not a fixed path -
   // see AssetService.getLatest and routes/media.ts.
