@@ -39,6 +39,7 @@ import { addSubtitlesTool } from "./audio/addSubtitles.js";
 import { createThumbnailTool } from "./media/createThumbnail.js";
 import { validateVideoTool } from "./validation/validateVideo.js";
 import { generateBackgroundPromptTool } from "./branding/generateBackgroundPrompt.js";
+import { generateYoutubeMetadataTool } from "./branding/generateYoutubeMetadata.js";
 
 /**
  * Builds the tool registry available to the agent: prompt generation
@@ -68,6 +69,7 @@ export function buildToolRegistry(): ToolRegistry {
   registry.register(removeSceneTool);
   registry.register(moveSceneTool);
   registry.register(generateBackgroundPromptTool);
+  registry.register(generateYoutubeMetadataTool);
 
   registry.register(listMediaTool);
   registry.register(inspectMediaTool);

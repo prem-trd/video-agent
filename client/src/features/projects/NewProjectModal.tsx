@@ -26,6 +26,22 @@ const ASPECT_PRESETS: { label: string; value: AspectRatio; hint: string }[] = [
   { label: "Classic 4:3", value: "4:3", hint: "1440x1080" },
 ];
 
+// Pre-filled "Describe it" text - a complete request (topic + items,
+// audience, narration + presenter, style, clip length, aspect,
+// scene layout) so a new video only needs the topic lines edited. No
+// duration: analyze_request derives it from the item count. The
+// presenter is an adult + animal mascot on purpose: a young child presenter
+// combined with topics like body parts trips video generators' minor-safety
+// filters.
+const DEFAULT_PROMPT =
+  "Create an educational kids video about body parts: Head, Eyes, Nose, Mouth, Ears, Hands, Legs, Feet. " +
+  "For preschool kids aged 2-5. " +
+  "Narration required, spoken by a cheerful adult woman teacher with curly brown hair, a bright yellow t-shirt and blue overalls, " +
+  "together with a friendly white bunny mascot with a blue bow tie. The teacher points to each part on herself. " +
+  "3D Cartoon Pixar style, bright classroom. " +
+  "10-second clips, 16:9. " +
+  "One body part per scene, with an intro scene and a goodbye scene at the end.";
+
 /**
  * Minimal project creation - just enough to get a project id. Full prompt
  * configuration (clip/image duration, style, audience, narration/music,
@@ -40,7 +56,7 @@ export function NewProjectModal({ onCancel, onSubmit, submitting }: Props) {
   const [mediaType, setMediaType] = useState<MediaType>("VIDEO");
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>("16:9");
 
-  const [prompt, setPrompt] = useState("Create a 5 minute ABC with Farm Animals video for preschool kids.");
+  const [prompt, setPrompt] = useState(DEFAULT_PROMPT);
 
   function handleSubmit() {
     if (mode === "structured") {
@@ -70,7 +86,7 @@ export function NewProjectModal({ onCancel, onSubmit, submitting }: Props) {
         {mode === "prompt" ? (
           <div className="form-row">
             <label>What do you want to make?</label>
-            <textarea rows={4} value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="e.g. Create a 5 minute ABC with Farm Animals video for preschool kids." />
+            <textarea rows={8} value={prompt} onChange={(e) => setPrompt(e.target.value)} placeholder="e.g. Create a 5 minute ABC with Farm Animals video for preschool kids." />
           </div>
         ) : (
           <>

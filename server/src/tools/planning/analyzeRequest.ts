@@ -35,12 +35,22 @@ export const analyzeRequestTool: Tool<z.infer<typeof InputSchema>> = {
             "Infer sensible defaults for anything not stated (default mediaType VIDEO, duration 60s if truly unstated, clipDurationSec 10, imageDurationSec 5, aspectRatio 16:9, language English) " +
             "but list anything IMPORTANT left ambiguous in missingInfo (e.g. target audience, specific topic, visual style) only if it would meaningfully change the output. " +
             "There is NO maximum duration - a request for 5, 10, 20 or 30+ minutes is normal; never cap or shrink it. " +
+            "Set durationStated true only if the user explicitly gave a total length, and itemCount to the number of distinct teaching items (alphabet = 26, numbers 1-10 = 10, a listed set = its length; 0 if not a countable list) - " +
+            "the total duration is derived from itemCount when no length is given, so don't list duration in missingInfo for countable topics. " +
             "Respond with ONLY a JSON object matching the schema.",
         },
         { role: "user", content: input.request },
       ],
       RequestAnalysisSchema
     );
+
+    // No length given for a countable topic: one scene per item plus an
+    // intro and a goodbye scene, so every item gets its own clip instead of
+    // being crammed into the 60s default.
+    if (!analysis.durationStated && analysis.itemCount > 0) {
+      const perScene = analysis.mediaType === "IMAGE" ? analysis.imageDurationSec : analysis.clipDurationSec;
+      analysis.duration = Math.round((analysis.itemCount + 2) * perScene);
+    }
     return analysis;
   },
 };

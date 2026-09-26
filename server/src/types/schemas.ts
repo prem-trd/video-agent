@@ -124,6 +124,13 @@ export const RequestAnalysisSchema = z.object({
   videoType: z.string(),
   narrationRequired: z.boolean().default(false),
   musicRequired: z.boolean().default(false),
+  durationStated: z.boolean().default(false).describe("true only if the user explicitly gave a total length (e.g. \"2 minutes\", \"90 seconds\")."),
+  itemCount: z
+    .number()
+    .int()
+    .nonnegative()
+    .default(0)
+    .describe("Number of distinct teaching items the topic covers, one per scene (alphabet A-Z = 26, numbers 1-10 = 10, a listed set = its length). 0 if the topic is not a countable list."),
   missingInfo: z
     .array(z.string())
     .default([])

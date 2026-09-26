@@ -37,7 +37,9 @@ export const createPromptPlanTool: Tool<z.infer<typeof InputSchema>> = {
           content:
             "You are a creative director for an AI prompt-generation tool (it writes prompts; the user generates the actual media externally and uploads it). " +
             "Given a project's configuration, produce an objective (what the finished video/slideshow should achieve) and a Style Bible that will be applied " +
-            "consistently to every scene's visuals so externally-generated clips/images look like they belong together. Respond with ONLY a JSON object matching the schema.",
+            "consistently to every scene's visuals so externally-generated clips/images look like they belong together. " +
+            "The Style Bible MUST faithfully expand the project's Visual style - e.g. for a 3D style write 3D-render language (\"3D animated Pixar-style cartoon, rendered 3D characters with soft shading, volumetric lighting, depth of field\") and never 2D words like flat colors, flat illustration, vector or simple shapes; for a 2D style do the reverse. " +
+            "Respond with ONLY a JSON object matching the schema.",
         },
         { role: "user", content: `${context}\nRequired scene count (fixed, do not change): ${sceneCount}` },
       ],

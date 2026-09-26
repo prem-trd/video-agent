@@ -54,7 +54,8 @@ export const createStoryStructureTool: Tool<z.infer<typeof InputSchema>> = {
               "For each: a short `title`, a `summary` of what happens (visual, not spoken), and `narration` text ONLY if narrationRequired is true (otherwise leave it empty). " +
               `Narration is spoken inside each ${perSceneDuration}s clip by the video generator, so keep each scene's narration to AT MOST ${maxNarrationWords(perSceneDuration)} words - short, simple, energetic sentences, no emojis. ` +
               (project.mediaType === "VIDEO" && project.narrationRequired
-                ? "Unless the topic clearly suits a voice-over only, include ONE recurring on-screen presenter character (a friendly host who speaks the narration) in `characters`, with a very detailed appearance (age, height, skin, hair, eyes, exact clothing and shoes). "
+                ? "Unless the topic clearly suits a voice-over only, include ONE recurring on-screen presenter character (a friendly ADULT cartoon host, or an animal mascot, who speaks the narration - never a child) in `characters`, with a very detailed appearance (hair, eyes, exact clothing and shoes - no ages, heights, measurements or skin hex codes, which trip video-generator safety filters). " +
+                  "Address viewers as \"friends\" in narration, and never use the words body/bodies, skin or touch with a person. "
                 : "") +
               "If the topic naturally has more items than scenes (e.g. the alphabet, numbers 1-20), group multiple items into one scene rather than skipping ahead of the assigned scene numbers. " +
               "List any NEW recurring characters in `characters` and NEW recurring settings/environments in `environments` this batch introduces (skip ones already listed in the Character/Environment Bible below). " +
