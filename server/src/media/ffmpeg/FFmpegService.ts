@@ -55,6 +55,11 @@ const MAX_BUFFER = 1024 * 1024 * 64; // 64MB of stdout/stderr - ffmpeg logs can 
  * used formats (e.g. lavfi) as "not available" even when the underlying
  * binary fully supports them. Direct execFile calls avoid that entirely.
  */
+/** Common audio format for every segment, so concat/amix never see mismatched sample rates or layouts. */
+const AUDIO_FORMAT = "aformat=sample_rates=48000:channel_layouts=stereo";
+/** Endless silent stereo source - always bounded by -t/atrim or the video length. */
+const SILENT_AUDIO_SOURCE = "anullsrc=r=48000:cl=stereo";
+
 export class FFmpegService {
   private async exec(args: string[], label: string): Promise<void> {
     const start = Date.now();
@@ -249,7 +254,7 @@ export class FFmpegService {
     }
   }
 
-  /** Converts a still image into a fixed-duration video segment (slideshow building block). Never stretches - see fitFilter. */
+  /** Converts a still image into a fixed-duration video segment (slideshow building block) with a silent audio track. Never stretches - see fitFilter. */
   async imageToVideo(
     inputPath: string,
     outputPath: string,
@@ -262,6 +267,14 @@ export class FFmpegService {
         "1",
         "-i",
         inputPath,
+        "-f",
+        "lavfi",
+        "-i",
+        SILENT_AUDIO_SOURCE,
+        "-map",
+        "0:v",
+        "-map",
+        "1:a",
         "-t",
         String(opts.durationSec),
         "-vf",
@@ -270,13 +283,21 @@ export class FFmpegService {
         "yuv420p",
         "-c:v",
         "libx264",
+        "-c:a",
+        "aac",
         outputPath,
       ],
       "imageToVideo"
     );
   }
 
-  /** Normalizes an uploaded video clip to a common resolution/fps/fit, with optional trim. */
+  /**
+   * Normalizes an uploaded video clip to a common resolution/fps/fit, with
+   * optional trim. The clip's own audio (dialogue, SFX, music baked in by
+   * the generator) is KEPT, resampled to a common format; a clip without
+   * audio gets a silent track, so every segment can be concatenated with
+   * audio.
+   */
   async normalizeVideoClip(
     inputPath: string,
     outputPath: string,
@@ -289,15 +310,22 @@ export class FFmpegService {
       trimEndSec?: number;
     }
   ): Promise<void> {
-    const vf = `${this.fitFilter(opts.fitMode ?? "FIT", opts.width, opts.height)},fps=${opts.fps}`;
+    const source = await this.probe(inputPath);
+    const trimStart = opts.trimStartSec ?? 0;
+    const trimmed = opts.trimEndSec !== undefined ? opts.trimEndSec - trimStart : 0;
+    const duration = trimmed > 0 ? trimmed : Math.max(0, source.durationSec - trimStart);
+
+    const filter = [
+      `[0:v]${this.fitFilter(opts.fitMode ?? "FIT", opts.width, opts.height)},fps=${opts.fps}[v]`,
+      source.hasAudio ? `[0:a:0]${AUDIO_FORMAT},apad[a]` : `${SILENT_AUDIO_SOURCE}[a]`,
+    ].join(";");
+
     const args: string[] = [];
-    if (opts.trimStartSec) args.push("-ss", String(opts.trimStartSec));
-    args.push("-i", inputPath);
-    if (opts.trimEndSec !== undefined) {
-      const duration = opts.trimEndSec - (opts.trimStartSec ?? 0);
-      if (duration > 0) args.push("-t", String(duration));
-    }
-    args.push("-vf", vf, "-pix_fmt", "yuv420p", "-c:v", "libx264", "-an", outputPath);
+    if (trimStart) args.push("-ss", String(trimStart));
+    args.push("-i", inputPath, "-filter_complex", filter, "-map", "[v]", "-map", "[a]");
+    // Explicit output duration: apad/anullsrc are endless, so the video length decides.
+    if (duration > 0) args.push("-t", String(duration));
+    args.push("-pix_fmt", "yuv420p", "-c:v", "libx264", "-c:a", "aac", outputPath);
     await this.exec(args, "normalizeVideoClip");
   }
 
@@ -305,7 +333,7 @@ export class FFmpegService {
   // Assembly (spec #23 pipeline)
   // ---------------------------------------------------------------------
 
-  /** Concatenates video clips (re-encoding each to a common spec first, so mixed sources still work). */
+  /** Concatenates video clips with their audio (re-encoding each to a common spec first, so mixed sources still work; inputs without audio contribute silence). */
   async concatenateVideos(inputPaths: string[], outputPath: string, opts: { width: number; height: number; fps: number }): Promise<void> {
     if (inputPaths.length === 0) {
       throw new AppError("FFMPEG_ERROR", "concatenateVideos called with no inputs.", { retryable: false });
@@ -315,18 +343,34 @@ export class FFmpegService {
       return;
     }
 
+    const probes = await Promise.all(inputPaths.map((p) => this.probe(p)));
     const filterParts: string[] = [];
-    inputPaths.forEach((_p, i) => {
+    probes.forEach((probe, i) => {
       filterParts.push(
         `[${i}:v]scale=${opts.width}:${opts.height}:force_original_aspect_ratio=decrease,pad=${opts.width}:${opts.height}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=${opts.fps}[v${i}]`
       );
+      filterParts.push(probe.hasAudio ? `[${i}:a:0]${AUDIO_FORMAT}[a${i}]` : `${SILENT_AUDIO_SOURCE},atrim=0:${probe.durationSec}[a${i}]`);
     });
-    const concatInputs = inputPaths.map((_p, i) => `[v${i}]`).join("");
-    filterParts.push(`${concatInputs}concat=n=${inputPaths.length}:v=1:a=0[outv]`);
+    const concatInputs = inputPaths.map((_p, i) => `[v${i}][a${i}]`).join("");
+    filterParts.push(`${concatInputs}concat=n=${inputPaths.length}:v=1:a=1[outv][outa]`);
 
     const args: string[] = [];
     for (const p of inputPaths) args.push("-i", p);
-    args.push("-filter_complex", filterParts.join(";"), "-map", "[outv]", "-c:v", "libx264", "-pix_fmt", "yuv420p", outputPath);
+    args.push(
+      "-filter_complex",
+      filterParts.join(";"),
+      "-map",
+      "[outv]",
+      "-map",
+      "[outa]",
+      "-c:v",
+      "libx264",
+      "-pix_fmt",
+      "yuv420p",
+      "-c:a",
+      "aac",
+      outputPath
+    );
     await this.exec(args, "concatenateVideos");
   }
 
@@ -372,6 +416,36 @@ export class FFmpegService {
     await this.exec(
       ["-i", videoPath, "-i", audioPath, "-filter_complex", filter, "-map", "[v]", "-map", "[a]", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", outputPath],
       "addAudio"
+    );
+  }
+
+  /**
+   * Layers an external audio file (narration, a prepared music bed) on top
+   * of the video's EXISTING audio instead of replacing it, so the clips' own
+   * sound survives. Summed at unity gain (amix normalize=0) - each input
+   * keeps its own level; music volume is set when preparing the music bed.
+   * Falls back to addAudio when the video has no audio stream. The shorter
+   * side is padded, never truncated (same rule as addAudio).
+   */
+  async mixAudioIntoVideo(videoPath: string, audioPath: string, outputPath: string): Promise<void> {
+    const [videoProbe, audioProbe] = await Promise.all([this.probe(videoPath), this.probe(audioPath)]);
+    if (!videoProbe.hasAudio) {
+      await this.addAudio(videoPath, audioPath, outputPath);
+      return;
+    }
+    const targetDuration = Math.max(videoProbe.durationSec, audioProbe.durationSec);
+    const videoPad = Math.max(0, targetDuration - videoProbe.durationSec);
+
+    const filter = [
+      videoPad > 0.05 ? `[0:v]tpad=stop_mode=clone:stop_duration=${videoPad}[v]` : `[0:v]null[v]`,
+      `[0:a:0]${AUDIO_FORMAT}[va]`,
+      `[1:a:0]${AUDIO_FORMAT}[xa]`,
+      `[va][xa]amix=inputs=2:duration=longest:normalize=0:dropout_transition=0,apad=whole_dur=${targetDuration}[a]`,
+    ].join(";");
+
+    await this.exec(
+      ["-i", videoPath, "-i", audioPath, "-filter_complex", filter, "-map", "[v]", "-map", "[a]", "-t", String(targetDuration), "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", outputPath],
+      "mixAudioIntoVideo"
     );
   }
 

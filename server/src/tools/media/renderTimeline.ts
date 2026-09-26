@@ -33,6 +33,13 @@ export const renderTimelineTool: Tool<z.infer<typeof InputSchema>> = {
       throw new AppError("VALIDATION_ERROR", "The timeline is empty - upload media and match/assign it to scenes first.", { retryable: false });
     }
 
+    // A new timeline render invalidates every later stage from the previous
+    // run - otherwise a stale with_music/final file (preferred as "most
+    // complete") would shadow this render in playback and validation.
+    await Promise.all(
+      [RenderPaths.withNarration, RenderPaths.withMusic, RenderPaths.final].map((stage) => fs.rm(stage(ctx.projectId), { force: true }))
+    );
+
     const project = await ProjectService.get(ctx.projectId);
     const { width, height } = parseResolution(project.resolution);
     const tempDir = await ffmpegService.tempDir("render-timeline-");

@@ -9,7 +9,8 @@ import { AppError } from "../../utils/errors.js";
 const InputSchema = z.object({}).strict();
 
 /**
- * Muxes the uploaded narration track onto the rendered silent video.
+ * Mixes the uploaded narration track over the rendered video's own audio
+ * (the uploaded clips' sound is kept, not replaced).
  * Optional - if the user hasn't uploaded narration, skip straight to
  * add_music or add_subtitles. No TTS is generated here.
  */
@@ -33,7 +34,7 @@ export const addNarrationTool: Tool<z.infer<typeof InputSchema>> = {
     }
 
     const outputPath = RenderPaths.withNarration(ctx.projectId);
-    await ffmpegService.addAudio(silentVideoPath, track.filePath, outputPath);
+    await ffmpegService.mixAudioIntoVideo(silentVideoPath, track.filePath, outputPath);
 
     const probe = await ffmpegService.probe(outputPath);
     return { filePath: outputPath, durationSec: probe.durationSec, hasAudio: probe.hasAudio };

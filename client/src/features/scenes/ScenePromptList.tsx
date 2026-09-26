@@ -2,6 +2,7 @@ import { useState } from "react";
 import type { MediaType, PromptVersion, Scene } from "../../types/api";
 import { api } from "../../services/api";
 import { StatusBadge } from "../../components/StatusBadge";
+import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 
 interface Props {
   projectId: string;
@@ -13,6 +14,10 @@ interface Props {
   onMove: (sceneId: string, ref: { beforeSceneNumber?: number; afterSceneNumber?: number }) => void;
   onAddScenes: (count: number) => void;
   onRefresh: () => void;
+}
+
+function promptFor(scene: Scene, mediaType: MediaType) {
+  return mediaType === "IMAGE" ? scene.imagePrompt : scene.videoPrompt || scene.imagePrompt;
 }
 
 function formatTime(sec: number) {
@@ -65,15 +70,29 @@ function SceneVersions({ projectId, scene, onRestored }: { projectId: string; sc
 }
 
 export function ScenePromptList({ projectId, mediaType, scenes, sending, onRegenerate, onDelete, onMove, onAddScenes, onRefresh }: Props) {
+  const { copiedKey, copy } = useCopyToClipboard();
+  const withPrompts = scenes.filter((s) => promptFor(s, mediaType));
+
   return (
     <div className="panel-card">
-      <h3>Scenes / Prompts ({scenes.length})</h3>
+      <div className="panel-card-header">
+        <h3>Scenes / Prompts ({scenes.length})</h3>
+        {withPrompts.length > 0 && (
+          <button
+            className={`copy-btn ${copiedKey === "all" ? "copied" : ""}`}
+            title="Copy every scene's prompt, numbered, one per paragraph"
+            onClick={() => copy("all", withPrompts.map((s) => `Scene ${s.sceneNumber}:\n${promptFor(s, mediaType)}`).join("\n\n"))}
+          >
+            {copiedKey === "all" ? "Copied ✓" : `Copy all (${withPrompts.length})`}
+          </button>
+        )}
+      </div>
       {scenes.length === 0 ? (
         <div style={{ fontSize: 12.5, color: "var(--text-dim)" }}>No scenes yet - use the Prompt Generator above, or ask the agent in chat.</div>
       ) : (
         <div className="scene-list">
           {scenes.map((s, i) => {
-            const prompt = mediaType === "IMAGE" ? s.imagePrompt : s.videoPrompt || s.imagePrompt;
+            const prompt = promptFor(s, mediaType);
             return (
               <div key={s.id} className="scene-row">
                 <div className="scene-row-top">
@@ -82,6 +101,15 @@ export function ScenePromptList({ projectId, mediaType, scenes, sending, onRegen
                   <span style={{ fontSize: 11, color: "var(--text-dim)", marginLeft: "auto" }}>
                     {formatTime(s.startTime)}–{formatTime(s.endTime)} ({s.duration}s)
                   </span>
+                  {prompt && (
+                    <button
+                      className={`copy-btn ${copiedKey === s.id ? "copied" : ""}`}
+                      title={`Copy scene #${s.sceneNumber}'s prompt`}
+                      onClick={() => copy(s.id, prompt)}
+                    >
+                      {copiedKey === s.id ? "Copied ✓" : "Copy"}
+                    </button>
+                  )}
                 </div>
                 <div className="scene-row-narration" title={prompt} style={{ whiteSpace: "normal" }}>
                   {prompt || "(no prompt yet)"}

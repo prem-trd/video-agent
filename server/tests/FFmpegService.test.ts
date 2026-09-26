@@ -2,7 +2,20 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
+import { execFile } from "node:child_process";
 import { ffmpegService } from "../src/media/ffmpeg/FFmpegService.js";
+import { env } from "../src/utils/env.js";
+
+/** Mean loudness in dB via ffmpeg volumedetect (-91 dB is digital silence). */
+function meanVolumeDb(filePath: string): Promise<number> {
+  return new Promise((resolve, reject) => {
+    execFile(env.FFMPEG_PATH, ["-i", filePath, "-map", "0:a", "-af", "volumedetect", "-f", "null", "-"], (err, _stdout, stderr) => {
+      const match = /mean_volume:\s*(-?[\d.]+|-inf) dB/.exec(stderr);
+      if (!match) return reject(err ?? new Error(`no volumedetect output: ${stderr.slice(-300)}`));
+      resolve(match[1] === "-inf" ? -Infinity : Number(match[1]));
+    });
+  });
+}
 
 // These run the REAL ffmpeg/ffprobe binaries (short, low-res clips) rather
 // than mocking them - the spec explicitly rules out fake functionality for
@@ -171,7 +184,7 @@ describe("FFmpegService (real ffmpeg/ffprobe)", () => {
     }
   });
 
-  it("normalizeVideoClip resizes an uploaded clip to the target resolution/fps without audio", async () => {
+  it("normalizeVideoClip resizes a clip that has no audio and gives it a silent track", async () => {
     const source = path.join(dir, "uploaded-clip.mp4");
     await ffmpegService.generateTestVideo(source, { width: 640, height: 360, durationSec: 2, fps: 30, color: "0x336699", title: "Clip" });
 
@@ -179,9 +192,63 @@ describe("FFmpegService (real ffmpeg/ffprobe)", () => {
     await ffmpegService.normalizeVideoClip(source, out, { width: 320, height: 180, fps: 24, fitMode: "CROP" });
     const probe = await ffmpegService.probe(out);
     expect(probe.hasVideo).toBe(true);
-    expect(probe.hasAudio).toBe(false);
+    expect(probe.hasAudio).toBe(true);
+    expect(await meanVolumeDb(out)).toBeLessThan(-80);
     expect(probe.width).toBe(320);
     expect(probe.height).toBe(180);
+  });
+
+  it("normalizeVideoClip keeps an uploaded clip's own audio", async () => {
+    const silent = path.join(dir, "sound-clip-silent.mp4");
+    const tone = path.join(dir, "sound-clip-tone.m4a");
+    const source = path.join(dir, "sound-clip.mp4");
+    await ffmpegService.generateTestVideo(silent, { width: 640, height: 360, durationSec: 2, fps: 30, color: "0x336699", title: "Sound" });
+    await ffmpegService.generateToneAudio(tone, { durationSec: 2, volume: 0.5 });
+    await ffmpegService.addAudio(silent, tone, source);
+
+    const out = path.join(dir, "sound-clip-normalized.mp4");
+    await ffmpegService.normalizeVideoClip(source, out, { width: 320, height: 180, fps: 24 });
+    const probe = await ffmpegService.probe(out);
+    expect(probe.hasAudio).toBe(true);
+    expect(probe.durationSec).toBeGreaterThan(1.8);
+    expect(probe.durationSec).toBeLessThan(2.3);
+    expect(await meanVolumeDb(out)).toBeGreaterThan(-40);
+  });
+
+  it("render pipeline keeps clip audio through concat and layers music on top", async () => {
+    const withSound = path.join(dir, "pipe-a.mp4");
+    const noSoundSrc = path.join(dir, "pipe-b-src.mp4");
+    const silentSrc = path.join(dir, "pipe-a-silent.mp4");
+    const tone = path.join(dir, "pipe-tone.m4a");
+    await ffmpegService.generateTestVideo(silentSrc, { width: 320, height: 180, durationSec: 1, fps: 24, color: "0x223344", title: "A" });
+    await ffmpegService.generateToneAudio(tone, { durationSec: 1, volume: 0.5 });
+    await ffmpegService.addAudio(silentSrc, tone, withSound);
+    await ffmpegService.generateTestVideo(noSoundSrc, { width: 320, height: 180, durationSec: 1, fps: 24, color: "0x556677", title: "B" });
+
+    const segA = path.join(dir, "pipe-seg-a.mp4");
+    const segB = path.join(dir, "pipe-seg-b.mp4");
+    await ffmpegService.normalizeVideoClip(withSound, segA, { width: 320, height: 180, fps: 24 });
+    await ffmpegService.normalizeVideoClip(noSoundSrc, segB, { width: 320, height: 180, fps: 24 });
+
+    const joined = path.join(dir, "pipe-joined.mp4");
+    await ffmpegService.concatenateVideos([segA, segB], joined, { width: 320, height: 180, fps: 24 });
+    const joinedProbe = await ffmpegService.probe(joined);
+    expect(joinedProbe.hasAudio).toBe(true);
+    expect(joinedProbe.durationSec).toBeGreaterThan(1.8);
+    const joinedDb = await meanVolumeDb(joined);
+    expect(joinedDb).toBeGreaterThan(-45);
+
+    const music = path.join(dir, "pipe-music.m4a");
+    const bed = path.join(dir, "pipe-bed.m4a");
+    await ffmpegService.generateToneAudio(music, { durationSec: 1, frequency: 660, volume: 0.5 });
+    await ffmpegService.prepareMusicTrack(music, bed, { durationSec: joinedProbe.durationSec, volume: 1 });
+    const mixed = path.join(dir, "pipe-mixed.mp4");
+    await ffmpegService.mixAudioIntoVideo(joined, bed, mixed);
+    const mixedProbe = await ffmpegService.probe(mixed);
+    expect(mixedProbe.hasAudio).toBe(true);
+    expect(Math.abs(mixedProbe.durationSec - joinedProbe.durationSec)).toBeLessThan(0.2);
+    // Layered, not replaced: clip tone + music is louder than the clip audio alone.
+    expect(await meanVolumeDb(mixed)).toBeGreaterThan(joinedDb + 1);
   });
 
   it("normalizeVideoClip trims to the given start/end range", async () => {

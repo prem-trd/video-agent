@@ -23,6 +23,10 @@ export function useProjectWorkspace(projectId: string | null) {
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
   const [status, setStatus] = useState<AgentStatus | null>(null);
   const [sending, setSending] = useState(false);
+  // Tool currently executing (from tool_called until tool_completed) - AgentLog rows are only
+  // written when a tool FINISHES, so this is what lets the activity feed show a long step
+  // (e.g. render_timeline) while it's still running.
+  const [activeTool, setActiveTool] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -64,8 +68,10 @@ export function useProjectWorkspace(projectId: string | null) {
       setLatestRender(null);
       setChatHistory([]);
       setStatus(null);
+      setActiveTool(null);
       return;
     }
+    setActiveTool(null);
     setLoading(true);
     setError(null);
     Promise.all([refreshAll(), refreshStatus()])
@@ -78,6 +84,8 @@ export function useProjectWorkspace(projectId: string | null) {
     useCallback(
       (event) => {
         if (event.type === "agent_started") setSending(true);
+        if (event.type === "tool_called") setActiveTool(typeof event.data?.tool === "string" ? event.data.tool : null);
+        if (event.type === "tool_completed" || event.type === "project_completed" || event.type === "error") setActiveTool(null);
         if (event.type === "tool_called" || event.type === "tool_completed") {
           refreshStatus().catch(() => {});
         }
@@ -122,6 +130,7 @@ export function useProjectWorkspace(projectId: string | null) {
         throw err;
       } finally {
         setSending(false);
+        setActiveTool(null);
         await Promise.all([refreshAll(), refreshStatus()]).catch(() => {});
       }
     },
@@ -276,6 +285,7 @@ export function useProjectWorkspace(projectId: string | null) {
     chatHistory,
     status,
     sending,
+    activeTool,
     loading,
     error,
     sendMessage,

@@ -9,7 +9,20 @@ import { parseResolution } from "../../utils/resolution.js";
 
 const InputSchema = z.object({}).strict();
 
-const DURATION_TOLERANCE_RATIO = 0.3; // per-item durations (esp. trimmed/uploaded clips) can drift a bit from the planned target
+const DURATION_TOLERANCE_RATIO = 0.1; // normalizing clips to the project fps (and frame-rounding at each cut) drifts a little from the timeline's own math
+
+/**
+ * The render is checked against what the TIMELINE says it should be (sum of
+ * its items' effective durations), not the project's target duration - a
+ * partial assembly (e.g. 4 of 30 scenes uploaded so far) is a valid render
+ * of that timeline, just a short one. Returns an issue string, or null.
+ */
+export function durationIssue(actualSec: number, expectedSec: number): string | null {
+  if (expectedSec <= 0) return null;
+  const tolerance = Math.max(1.5, expectedSec * DURATION_TOLERANCE_RATIO);
+  if (Math.abs(actualSec - expectedSec) <= tolerance) return null;
+  return `Duration is ${actualSec.toFixed(1)}s, but the timeline adds up to ${expectedSec.toFixed(1)}s (+/- ${tolerance.toFixed(1)}s).`;
+}
 
 async function firstExisting(paths: string[]): Promise<string | null> {
   const fs = await import("node:fs/promises");
@@ -26,7 +39,9 @@ async function firstExisting(paths: string[]): Promise<string | null> {
 
 /**
  * Validates the final rendered video: exists, has a video stream, and
- * resolution/duration/fps roughly match the project's spec. An audio
+ * resolution/fps match the project's spec and its duration matches the
+ * timeline it was rendered from. Rendering fewer scenes than planned is
+ * reported as `coverage` (informational), never as a failure. An audio
  * stream is only REQUIRED if the project actually has narration/music
  * uploaded (spec: "if no audio exists, the video should still assemble
  * successfully"). Persists a Render row either way, and sets the project
@@ -70,12 +85,20 @@ export const validateVideoTool: Tool<z.infer<typeof InputSchema>> = {
         issues.push("No valid fps detected.");
       }
 
-      const expectedDuration = project.duration;
-      const tolerance = Math.max(2, expectedDuration * DURATION_TOLERANCE_RATIO);
-      if (Math.abs(probe.durationSec - expectedDuration) > tolerance) {
-        issues.push(`Duration is ${probe.durationSec.toFixed(1)}s, expected roughly ${expectedDuration}s (+/- ${tolerance.toFixed(1)}s).`);
-      }
+      const timelineDuration = timeline.reduce((max, item) => Math.max(max, item.endTime), 0);
+      const issue = durationIssue(probe.durationSec, timelineDuration);
+      if (issue) issues.push(issue);
     }
+
+    const sceneCount = await prisma.scene.count({ where: { projectId: ctx.projectId } });
+    const scenesWithMedia = new Set(timeline.map((t) => t.sceneId).filter(Boolean)).size;
+    const coverage = {
+      scenesWithMedia,
+      sceneCount,
+      renderedDurationSec: probe.durationSec,
+      targetDurationSec: project.duration,
+      partial: sceneCount > 0 && scenesWithMedia < sceneCount,
+    };
 
     const valid = issues.length === 0;
     await ProjectService.update(ctx.projectId, {
@@ -111,6 +134,7 @@ export const validateVideoTool: Tool<z.infer<typeof InputSchema>> = {
       hasVideo: probe.hasVideo,
       mediaItemCount: timeline.length,
       sizeBytes: probe.sizeBytes,
+      coverage,
     };
   },
 };

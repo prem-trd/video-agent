@@ -21,9 +21,10 @@ async function firstExisting(paths: string[]): Promise<string | null> {
 }
 
 /**
- * Mixes the uploaded background music track into the video (under the
- * narration if one was added, otherwise directly). Optional - only
- * relevant if the user uploaded music. No music is generated here.
+ * Mixes the uploaded background music track into the video, layered under
+ * whatever audio it already has (the clips' own sound, plus narration if
+ * add_narration ran). Optional - only relevant if the user uploaded music.
+ * No music is generated here.
  */
 export const addMusicTool: Tool<z.infer<typeof InputSchema>> = {
   name: "add_music",
@@ -42,29 +43,19 @@ export const addMusicTool: Tool<z.infer<typeof InputSchema>> = {
       throw new AppError("VALIDATION_ERROR", "No music track has been uploaded - upload one, or skip this step.", { retryable: false });
     }
 
-    const narrationTrack = await prisma.audioTrack.findFirst({ where: { projectId: ctx.projectId, kind: "NARRATION", active: true }, orderBy: { createdAt: "desc" } });
     const videoProbe = await ffmpegService.probe(sourceVideo);
     const outputPath = RenderPaths.withMusic(ctx.projectId);
 
-    if (narrationTrack && videoProbe.hasAudio) {
-      const mixedPath = RenderPaths.mixedAudioTrack(ctx.projectId);
-      await ffmpegService.mixAudio(narrationTrack.filePath, musicTrack.filePath, mixedPath, {
-        durationSec: videoProbe.durationSec,
-        musicVolume: musicTrack.volume,
-        fadeInSec: musicTrack.fadeInSec,
-        fadeOutSec: musicTrack.fadeOutSec,
-      });
-      await ffmpegService.addAudio(RenderPaths.silentVideo(ctx.projectId), mixedPath, outputPath);
-    } else {
-      const preparedMusicPath = RenderPaths.mixedAudioTrack(ctx.projectId);
-      await ffmpegService.prepareMusicTrack(musicTrack.filePath, preparedMusicPath, {
-        durationSec: videoProbe.durationSec,
-        volume: musicTrack.volume,
-        fadeInSec: musicTrack.fadeInSec,
-        fadeOutSec: musicTrack.fadeOutSec,
-      });
-      await ffmpegService.addAudio(sourceVideo, preparedMusicPath, outputPath);
-    }
+    // Loop/trim the bed to the video's length (with the track's volume and
+    // fades), then layer it under the existing audio rather than replacing it.
+    const preparedMusicPath = RenderPaths.mixedAudioTrack(ctx.projectId);
+    await ffmpegService.prepareMusicTrack(musicTrack.filePath, preparedMusicPath, {
+      durationSec: videoProbe.durationSec,
+      volume: musicTrack.volume,
+      fadeInSec: musicTrack.fadeInSec,
+      fadeOutSec: musicTrack.fadeOutSec,
+    });
+    await ffmpegService.mixAudioIntoVideo(sourceVideo, preparedMusicPath, outputPath);
 
     const probe = await ffmpegService.probe(outputPath);
     return { filePath: outputPath, durationSec: probe.durationSec, hasAudio: probe.hasAudio };

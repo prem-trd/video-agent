@@ -5,6 +5,7 @@ import { api } from "../../services/api";
 interface Props {
   project: Project;
   latestRender: Render | null;
+  sceneCount: number;
 }
 
 function formatBytes(bytes: number) {
@@ -12,15 +13,15 @@ function formatBytes(bytes: number) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function VideoFrame({ project }: { project: Project }) {
+/** Remounted (via `key`) for every new render, so a load error from before the video existed doesn't stick. */
+function VideoFrame({ src }: { src: string }) {
   const [failed, setFailed] = useState(false);
-  const src = `${api.videoUrl(project.id)}?t=${encodeURIComponent(project.updatedAt)}`;
 
   if (failed) {
     return (
       <div className="video-frame empty">
         <span>No video rendered yet</span>
-        <span>Upload media and click "Assemble Video" in the Upload &amp; Assemble tab.</span>
+        <span>Upload media and click "Assemble Video".</span>
       </div>
     );
   }
@@ -32,11 +33,15 @@ function VideoFrame({ project }: { project: Project }) {
   );
 }
 
-export function FinalRenderPanel({ project, latestRender }: Props) {
+export function FinalRenderPanel({ project, latestRender, sceneCount }: Props) {
+  // Cache-bust per render: the URL is fixed, but its file is overwritten on every assembly.
+  const version = latestRender?.id ?? project.updatedAt;
+  const src = `${api.videoUrl(project.id)}?v=${encodeURIComponent(version)}`;
+
   return (
     <div className="panel-card">
       <h3>Final Render</h3>
-      <VideoFrame project={project} />
+      <VideoFrame key={src} src={src} />
 
       {latestRender ? (
         <>
@@ -61,6 +66,12 @@ export function FinalRenderPanel({ project, latestRender }: Props) {
             <dd>{latestRender.hasSubtitles ? "Yes" : "None"}</dd>
           </dl>
 
+          {latestRender.status === "SUCCEEDED" && sceneCount > 0 && latestRender.mediaItemCount < sceneCount && (
+            <div className="mock-note" style={{ marginTop: 10 }}>
+              Partial render: {latestRender.mediaItemCount} of {sceneCount} scenes ({latestRender.durationSec.toFixed(0)}s of the {project.duration}s target). Upload the remaining clips and assemble again for the full-length video.
+            </div>
+          )}
+
           {latestRender.validationIssues.length > 0 && (
             <div className="error-banner" style={{ margin: "10px 0 0" }}>
               {latestRender.validationIssues.join(" ")}
@@ -68,7 +79,7 @@ export function FinalRenderPanel({ project, latestRender }: Props) {
           )}
 
           {latestRender.status === "SUCCEEDED" && (
-            <a className="btn-primary" style={{ display: "block", textAlign: "center", marginTop: 10, textDecoration: "none" }} href={api.videoUrl(project.id)} target="_blank" rel="noreferrer">
+            <a className="btn-primary" style={{ display: "block", textAlign: "center", marginTop: 10, textDecoration: "none" }} href={src} target="_blank" rel="noreferrer">
               Download Final Video
             </a>
           )}

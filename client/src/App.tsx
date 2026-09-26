@@ -7,12 +7,15 @@ import { ChatPanel } from "./features/chat/ChatPanel";
 import { PreviewPanel } from "./features/preview/PreviewPanel";
 import { AgentActivity } from "./features/activity/AgentActivity";
 import { ThemeToggle } from "./features/settings/ThemeToggle";
+import { FullVideoWorkspace } from "./features/assemble/FullVideoWorkspace";
+import { ModeSwitch, type WorkspaceMode } from "./components/ModeSwitch";
 
 export default function App() {
   const { projects, createProject, deleteProject } = useProjects();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [showNewProject, setShowNewProject] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [mode, setMode] = useState<WorkspaceMode>("prompts");
 
   const workspace = useProjectWorkspace(selectedId);
 
@@ -59,8 +62,9 @@ export default function App() {
       <div className="topbar">
         <div className="brand">
           <span className="brand-mark" />
-          AI Video Studio
+          <span className="brand-name">AI Video Studio</span>
         </div>
+        <ModeSwitch mode={mode} onChange={setMode} />
         <ThemeToggle />
       </div>
 
@@ -76,7 +80,7 @@ export default function App() {
       />
 
       <main className="main">
-        <div className="content-row">
+        <div className={`content-row ${mode === "video" ? "video-mode" : ""}`}>
           {!workspace.project ? (
             <div className="empty-state">
               <div style={{ fontWeight: 700, fontSize: 16, color: "var(--text)" }}>No project selected</div>
@@ -85,7 +89,7 @@ export default function App() {
                 + New Project
               </button>
             </div>
-          ) : (
+          ) : mode === "prompts" ? (
             <>
               <ChatPanel
                 chatHistory={workspace.chatHistory}
@@ -97,10 +101,6 @@ export default function App() {
               <PreviewPanel
                 project={workspace.project}
                 scenes={workspace.scenes}
-                mediaLibrary={workspace.mediaLibrary}
-                timeline={workspace.timeline}
-                audioTracks={workspace.audioTracks}
-                latestRender={workspace.latestRender}
                 sending={workspace.sending}
                 onUpdateConfig={workspace.updateProjectConfig}
                 onGeneratePrompts={workspace.generatePrompts}
@@ -108,21 +108,37 @@ export default function App() {
                 onDeleteScene={workspace.deleteScene}
                 onMoveScene={workspace.moveScene}
                 onAddScenes={workspace.addScenes}
-                onUploadFiles={workspace.uploadFiles}
-                onUploadAudio={workspace.uploadAudio}
-                onAssignMedia={workspace.assignMedia}
-                onRemoveTimelineItem={workspace.removeTimelineItem}
-                onReorderTimelineItem={workspace.reorderTimelineItem}
-                onPatchTimelineItem={workspace.patchTimelineItem}
-                onAssemble={workspace.assemble}
                 onRefresh={workspace.refreshAll}
               />
             </>
+          ) : (
+            <FullVideoWorkspace
+              project={workspace.project}
+              scenes={workspace.scenes}
+              mediaLibrary={workspace.mediaLibrary}
+              timeline={workspace.timeline}
+              audioTracks={workspace.audioTracks}
+              latestRender={workspace.latestRender}
+              sending={workspace.sending}
+              error={workspace.error}
+              onUploadFiles={workspace.uploadFiles}
+              onUploadAudio={workspace.uploadAudio}
+              onAssignMedia={workspace.assignMedia}
+              onRemoveTimelineItem={workspace.removeTimelineItem}
+              onReorderTimelineItem={workspace.reorderTimelineItem}
+              onPatchTimelineItem={workspace.patchTimelineItem}
+              onAssemble={workspace.assemble}
+            />
           )}
         </div>
 
         {workspace.project && (
-          <AgentActivity agentState={workspace.status?.agentState} logs={workspace.status?.logs ?? []} sending={workspace.sending} />
+          <AgentActivity
+            agentState={workspace.status?.agentState}
+            logs={workspace.status?.logs ?? []}
+            sending={workspace.sending}
+            activeTool={workspace.activeTool}
+          />
         )}
       </main>
 

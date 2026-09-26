@@ -84,12 +84,16 @@ export class VideoAgent {
           },
           onToolResult: (log) => {
             toolCallSummary.push({ name: log.toolName, success: log.result.success });
-            agentEvents.publish({
-              type: "tool_completed",
-              projectId,
-              data: { tool: log.toolName, success: log.result.success, durationMs: log.durationMs },
-            });
-            // fire-and-forget logging; failures here must not break the loop
+            const publishCompleted = () =>
+              agentEvents.publish({
+                type: "tool_completed",
+                projectId,
+                data: { tool: log.toolName, success: log.result.success, durationMs: log.durationMs },
+              });
+            // Fire-and-forget logging (failures here must not break the loop),
+            // but tool_completed goes out only once the AgentLog row exists -
+            // the UI refreshes its activity feed on that event, and publishing
+            // first raced the write so the new row was usually missing.
             void logAgentEvent({
               projectId,
               agentState: "ANALYZING",
@@ -101,7 +105,9 @@ export class VideoAgent {
                 ? `Tool ${log.toolName} succeeded (${log.retries} retries)`
                 : `Tool ${log.toolName} failed: ${log.result.error?.message}`,
               data: { input: log.input, result: log.result },
-            });
+            })
+              .catch(() => {})
+              .finally(publishCompleted);
           },
         }
       );
